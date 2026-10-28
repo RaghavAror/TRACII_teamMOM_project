@@ -1,0 +1,7 @@
+{
+  "name": "fake-exfil",
+  "version": "1.0.1",
+  "description": "INERT TEST FIXTURE for Tracii detectors. Never published, never installed, never executed. Host is RFC 2606 .invalid.",
+  "main": "index.js",
+  "scripts": { "postinstall": "node setup.js" }
+}

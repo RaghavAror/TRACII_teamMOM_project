@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tracii</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">TRACII <span>npm supply-chain investigator</span></div>
+  <button id="models-btn" class="ghost">Model status</button>
+</header>
+
+<main>
+  <section id="intake" class="card">
+    <h2>1 · Scan a project</h2>
+    <div class="tabs" role="tablist">
+      <button data-tab="github" class="active">GitHub repo</button>
+      <button data-tab="upload">Upload files</button>
+      <button data-tab="fixture">Demo project</button>
+    </div>
+    <form id="form-github" class="tab-panel">
+      <input name="url" placeholder="https://github.com/owner/repo  (or …/tree/branch)" required>
+      <input name="subdir" placeholder="sub-directory (optional, e.g. packages/web)">
+      <button>Scan</button>
+      <p class="hint">Only package.json and package-lock.json are fetched, pinned to the resolved commit SHA. Nothing is installed.</p>
+    </form>
+    <form id="form-upload" class="tab-panel hidden">
+      <label>package.json <input type="file" name="package_json" accept=".json" required></label>
+      <label>package-lock.json <input type="file" name="package_lock" accept=".json" required></label>
+      <button>Scan</button>
+    </form>
+    <form id="form-fixture" class="tab-panel hidden">
+      <select name="name" id="fixture-select"></select>
+      <button>Scan demo</button>
+      <p class="hint">Pinned to versions with public advisories. Never install it.</p>
+    </form>
+    <div id="progress" class="progress hidden"></div>
+  </section>
+
+  <section id="results" class="hidden">
+    <div class="card">
+      <h2>2 · What was checked</h2>
+      <div id="source-line" class="mono"></div>
+      <ul id="checks" class="checks"></ul>
+      <div id="warnings"></div>
+    </div>
+
+    <div class="card">
+      <h2>3 · Summary <small>categories are never merged into one score</small></h2>
+      <div id="summary" class="summary"></div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>4 · Findings</h2>
+        <div class="tabs" id="cat-tabs"></div>
+        <input id="filter" placeholder="filter by package…">
+        <table id="findings"><thead><tr><th>Severity</th><th>Package</th><th>Rule / advisory</th><th>Source</th><th>Path</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div class="card" id="detail"><p class="muted">Select a finding to see evidence, impact and a fix.</p></div>
+    </div>
+
+    <div class="card">
+      <h2>Ask about this scan</h2>
+      <form id="ask-form" class="row">
+        <input name="q" placeholder="e.g. Which direct dependency should I upgrade first?" minlength="3" required>
+        <button>Ask</button>
+        <button type="button" id="voice-btn" class="ghost">🎙 Hold to ask</button>
+      </form>
+      <div id="answer"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Version-to-version security diff</h2>
+    <form id="diff-form" class="row">
+      <input name="package" placeholder="package (e.g. event-stream)" required>
+      <input name="old_version" placeholder="old version" required>
+      <input name="new_version" placeholder="new version" required>
+      <button>Compare</button>
+    </form>
+    <div id="diff-out"></div>
+  </section>
+</main>
+
+<dialog id="models-dialog"><div id="models-body"></div><form method="dialog"><button>Close</button></form></dialog>
+<footer>Results say what these checks detected. “No issue detected” is not a guarantee that a package is safe.</footer>
+</body>
+</html>

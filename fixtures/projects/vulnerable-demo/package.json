@@ -1,0 +1,14 @@
+{
+  "name": "tracii-vulnerable-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Demo project with pinned, publicly-advised vulnerable versions. Never install or deploy.",
+  "dependencies": {
+    "express": "4.17.1",
+    "lodash": "4.17.20",
+    "mkdirp": "0.5.5"
+  },
+  "devDependencies": {
+    "minimist": "1.2.5"
+  }
+}

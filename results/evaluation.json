@@ -1,0 +1,84 @@
+{
+  "measured_at": "2026-10-27T19:19:48.182168+00:00",
+  "n": 4,
+  "note": "Hand-labelled INERT fixtures. n is tiny: this is a regression check, not a benchmark. Add real labelled samples (e.g. from ossf/malicious-packages reports, analysed statically only) before quoting any rate.",
+  "tracii_static": {
+    "tp": 3,
+    "fp": 0,
+    "fn": 0,
+    "tn": 1,
+    "precision": 1.0,
+    "recall": 1.0,
+    "false_positive_rate": 0.0
+  },
+  "rows": [
+    {
+      "package": "fake-exfil",
+      "label": "malicious",
+      "static_ms": 0.6,
+      "static_flagged": true,
+      "static_rules": [
+        "TRACII-CHAIN-EXFIL",
+        "TRACII-INSTALL-SCRIPT"
+      ],
+      "guarddog_ms": 5084.5,
+      "guarddog_flagged": false,
+      "guarddog_rules": [
+        "guarddog-capabilities",
+        "threat-runtime-environment-read"
+      ]
+    },
+    {
+      "package": "prompt-injection",
+      "label": "malicious",
+      "static_ms": 0.3,
+      "static_flagged": true,
+      "static_rules": [
+        "TRACII-CHAIN-EXFIL",
+        "TRACII-INSTALL-SCRIPT"
+      ],
+      "guarddog_ms": 2335.3,
+      "guarddog_flagged": false,
+      "guarddog_rules": [
+        "guarddog-capabilities"
+      ]
+    },
+    {
+      "package": "obfuscated-loader",
+      "label": "malicious",
+      "static_ms": 0.6,
+      "static_flagged": true,
+      "static_rules": [
+        "TRACII-OBFUSCATED-EVAL"
+      ],
+      "guarddog_ms": 2655.2,
+      "guarddog_flagged": true,
+      "guarddog_rules": [
+        "guarddog-capabilities",
+        "threat-runtime-obfuscation-base64exec"
+      ]
+    },
+    {
+      "package": "benign-http-client",
+      "label": "benign",
+      "static_ms": 0.3,
+      "static_flagged": false,
+      "static_rules": [],
+      "guarddog_ms": 3665.1,
+      "guarddog_flagged": false,
+      "guarddog_rules": [
+        "guarddog-capabilities",
+        "threat-runtime-environment-read"
+      ]
+    }
+  ],
+  "guarddog": {
+    "tp": 1,
+    "fp": 0,
+    "fn": 2,
+    "tn": 1,
+    "precision": 1.0,
+    "recall": 0.333,
+    "false_positive_rate": 0.0
+  }
+}

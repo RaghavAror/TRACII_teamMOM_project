@@ -1,0 +1,7 @@
+{
+  "_note": "Hand-labelled INERT fixtures. n is tiny: this is a regression check, not a benchmark. Add real labelled samples (e.g. from ossf/malicious-packages reports, analysed statically only) before quoting any rate.",
+  "fake-exfil": "malicious",
+  "prompt-injection": "malicious",
+  "obfuscated-loader": "malicious",
+  "benign-http-client": "benign"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "obfuscated-loader",
+  "version": "3.1.0",
+  "description": "INERT TEST FIXTURE: random bytes passed to eval-shaped code. Never executed.",
+  "main": "index.js"
+}

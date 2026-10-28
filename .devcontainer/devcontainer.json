@@ -1,0 +1,12 @@
+{
+  "name": "Tracii",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "bash scripts/setup_dev.sh",
+  "forwardPorts": [8000],
+  "portsAttributes": { "8000": { "label": "Tracii (API + UI)" } },
+  "hostRequirements": { "cpus": 2, "memory": "8gb" }
+}

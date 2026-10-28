@@ -1,0 +1,6 @@
+{
+  "name": "benign-http-client",
+  "version": "2.0.0",
+  "description": "TEST FIXTURE: ordinary API client that reads its key from env and calls a documented API. Should not be flagged as a chain.",
+  "main": "index.js"
+}

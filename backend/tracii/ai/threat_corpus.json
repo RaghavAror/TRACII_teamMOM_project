@@ -1,0 +1,37 @@
+[
+  {
+    "id": "TP-001",
+    "title": "Install-time credential exfiltration",
+    "tags": ["install_script", "env_read", "encode", "network"],
+    "description": "A lifecycle script (preinstall/postinstall) collects environment variables or token files such as ~/.npmrc, encodes them, and sends them to a remote host. Benign explanation to rule out: telemetry or build tooling that only sends non-secret metadata and documents it.",
+    "reference": "https://github.com/ossf/malicious-packages"
+  },
+  {
+    "id": "TP-002",
+    "title": "Dependency hijack with targeted payload",
+    "tags": ["dynamic_eval", "encode", "version_diff"],
+    "description": "A previously trusted package gains a new dependency or file containing an encrypted/encoded payload that is decoded and evaluated only under specific conditions. Public example: event-stream 3.3.6 added flatmap-stream (2018).",
+    "reference": "https://blog.npmjs.org/post/180565383195/details-about-the-event-stream-incident"
+  },
+  {
+    "id": "TP-003",
+    "title": "Account takeover release with downloader",
+    "tags": ["install_script", "exec", "network", "version_diff"],
+    "description": "A hijacked maintainer account publishes versions whose install script downloads and runs a binary (e.g. a cryptominer). Public example: ua-parser-js 0.7.29, 0.8.0, 1.0.0 (2021).",
+    "reference": "https://github.com/advisories/GHSA-pjwm-rvh2-c87w"
+  },
+  {
+    "id": "TP-004",
+    "title": "System reconnaissance beacon",
+    "tags": ["system_info", "network", "install_script"],
+    "description": "Install-time code collects hostname, username and network interfaces and sends them via HTTP or DNS lookups. Seen in dependency-confusion probes. Benign explanation to rule out: security-research canaries that disclose themselves.",
+    "reference": "https://medium.com/@alex.birsan/dependency-confusion-4a5d60fec610"
+  },
+  {
+    "id": "TP-005",
+    "title": "Obfuscated dynamic code",
+    "tags": ["dynamic_eval", "encode"],
+    "description": "Large high-entropy strings decoded and passed to eval/new Function hide the real behaviour from reviewers. Benign explanation to rule out: legitimate minified bundles or WebAssembly loaders, which usually come from a documented build step.",
+    "reference": "https://github.com/DataDog/guarddog"
+  }
+]
