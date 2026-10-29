@@ -54,6 +54,33 @@
       <div id="summary" class="summary"></div>
     </div>
 
+    <div class="card" id="graph-card">
+      <h2>Dependency graph <small>3D · colour = scanner result · size = packages that depend on it</small></h2>
+      <div class="row graph-bar">
+        <label class="muted"><input type="checkbox" id="graph-flagged"> only paths to findings</label>
+        <span id="graph-stats" class="muted"></span>
+      </div>
+      <div class="graph-wrap">
+        <div id="graph3d"></div>
+        <aside id="graph-info"><p class="muted">Click a node to see its findings and every package above it. Drag to rotate, scroll to zoom.</p></aside>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--accent)"></i>your app</span><span><i style="background:var(--crit)"></i>critical vuln</span>
+        <span><i style="background:var(--high)"></i>high</span><span><i style="background:var(--med)"></i>medium</span><span><i style="background:var(--low)"></i>low</span>
+        <span><i style="background:var(--g-mal)"></i>malicious-behaviour indicator (low+)</span><span><i style="background:var(--g-clean)"></i>no finding</span>
+        <span><i style="background:var(--g-dev)"></i>dev only</span><span><i style="background:var(--g-target)"></i>replay target</span>
+        <span><i style="background:var(--g-ghost)"></i>injected (replay)</span><span><i style="background:var(--g-wave)"></i>exposed (replay)</span>
+      </div>
+      <h3>Attack replays</h3>
+      <p class="muted">Four real npm incidents, each step sourced. If your project uses the package, the replay runs on your real dependency path; otherwise it is a labelled simulation on your most depended-on package.</p>
+      <form id="replay-form" class="row">
+        <select id="replay-select"></select>
+        <button>Play replay</button>
+        <button type="button" id="replay-reset" class="ghost">Reset</button>
+      </form>
+      <div id="replay-out"></div>
+    </div>
+
     <div class="grid">
       <div class="card">
         <h2>4 · Findings</h2>

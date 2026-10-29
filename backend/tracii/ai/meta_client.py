@@ -51,9 +51,10 @@ class OpenAICompatClient:
         if not self.configured:
             raise ModelUnavailable("model endpoint not configured")
         last: Exception | None = None
+        headers = {**self._headers(), **kwargs.pop("headers", {})}
         for attempt in range(self.retries + 1):
             try:
-                resp = self._client.post(f"{self.base_url}{path}", headers=self._headers(), **kwargs)
+                resp = self._client.post(f"{self.base_url}{path}", headers=headers, **kwargs)
             except httpx.HTTPError as exc:
                 last = exc
             else:
@@ -68,7 +69,7 @@ class OpenAICompatClient:
 
     def chat_json(self, model: str, system: str, user: str, schema: dict, schema_name: str,
                   reasoning_effort: str | None = None, strict: bool = True,
-                  image_data_url: str | None = None) -> dict:
+                  image_data_url: str | None = None, max_tokens: int | None = None) -> dict:
         content: Any = user
         if image_data_url:
             content = [{"type": "text", "text": user}, {"type": "image_url", "image_url": {"url": image_data_url}}]
@@ -80,9 +81,16 @@ class OpenAICompatClient:
         }
         if reasoning_effort:
             body["reasoning_effort"] = reasoning_effort
+        if max_tokens:
+            body["max_tokens"] = max_tokens
         resp = self._post("/chat/completions", json=body)
         try:
-            content = resp.json()["choices"][0]["message"]["content"]
+            choice = resp.json()["choices"][0]
+            content = choice["message"]["content"]
+            if not content:
+                # reasoning models can spend the whole budget thinking and return no answer
+                raise ModelUnavailable(f"model returned no answer (finish_reason={choice.get('finish_reason')}, "
+                                       f"reasoning chars={len(choice['message'].get('reasoning_content') or '')})")
             parsed = json.loads(content) if isinstance(content, str) else content
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ModelUnavailable(f"unparseable model output: {exc}") from exc
@@ -105,7 +113,7 @@ class MetaClient(OpenAICompatClient):
         resp = self._post("/asr/transcribe",
                           files={"request": (None, request, "application/json"),
                                  "audio": ("question.wav", wav, "audio/wav")},
-                          headers={**self._headers(), "Accept": "application/json"})
+                          headers={"Accept": "application/json"})
         text = resp.json().get("transcript", "")
         VERIFIED[model] = time.time()
         return text

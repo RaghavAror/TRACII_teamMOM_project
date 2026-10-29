@@ -1,0 +1,333 @@
+[
+  {
+    "id": "event-stream-2018",
+    "title": "event-stream: hijacked transitive dependency (2018)",
+    "attack_type": "Dependency hijack: a new dependency carries an encrypted, targeted payload",
+    "target": {
+      "package": "event-stream",
+      "bad_versions": [
+        "3.3.6"
+      ],
+      "safe_advice": "3.3.4, or 4.0.0 and later (GHSA-mh6f-8j2x-4483)",
+      "if_installed": "The payload only decrypts inside the targeted wallet app (copay); remove flatmap-stream from the tree."
+    },
+    "injected": {
+      "package": "flatmap-stream",
+      "version": "0.1.1"
+    },
+    "advisories": [
+      "GHSA-mh6f-8j2x-4483",
+      "GHSA-9x64-5r7x-2q53"
+    ],
+    "steps": [
+      {
+        "date": "2018-09-09",
+        "stage": "inject",
+        "text": "event-stream 3.3.6 is published with a new dependency, flatmap-stream@0.1.1, added by a malicious actor.",
+        "techniques": [
+          "T1195.001"
+        ],
+        "sources": [
+          "https://registry.npmjs.org/event-stream",
+          "https://osv.dev/vulnerability/GHSA-mh6f-8j2x-4483"
+        ]
+      },
+      {
+        "date": "2018-09-09",
+        "stage": "payload",
+        "text": "flatmap-stream reads AES-encrypted data from a file disguised as a test fixture and decrypts it with the npm description of the package that imported it, so the code only runs inside the targeted app (copay). The decrypted module is compiled in memory and executed.",
+        "techniques": [
+          "T1027",
+          "T1140",
+          "T1480",
+          "T1059.007"
+        ],
+        "sources": [
+          "https://osv.dev/vulnerability/GHSA-9x64-5r7x-2q53"
+        ]
+      },
+      {
+        "date": "2018-09-16",
+        "stage": "spread",
+        "text": "event-stream 4.0.0 ships without flatmap-stream, but semver ranges such as ^3.3.4 keep resolving to 3.3.6, so every dependent on the 3.x line still installs the payload.",
+        "techniques": [],
+        "sources": [
+          "https://registry.npmjs.org/event-stream"
+        ]
+      },
+      {
+        "date": "2018-11-20",
+        "stage": "discover",
+        "text": "A user opens event-stream issue #116 asking why flatmap-stream was added.",
+        "techniques": [],
+        "sources": [
+          "https://github.com/dominictarr/event-stream/issues/116"
+        ]
+      },
+      {
+        "date": "2018-11-26",
+        "stage": "impact",
+        "text": "Community analysis: the payload looked for wallets with balances over 100 BTC or 1000 BCH and sent wallet data to a remote server. npm removes the malicious version; GHSA-mh6f-8j2x-4483 is published.",
+        "techniques": [
+          "T1041"
+        ],
+        "sources": [
+          "https://github.com/dominictarr/event-stream/issues/116#issuecomment-441759047",
+          "https://osv.dev/vulnerability/GHSA-mh6f-8j2x-4483"
+        ]
+      }
+    ],
+    "detection": [
+      {
+        "check": "OSV (known vulnerability)",
+        "result": "measured",
+        "text": "Today OSV returns GHSA-mh6f-8j2x-4483 for event-stream@3.3.6 and three advisories for flatmap-stream@0.1.1 (queried 2026-10-29)."
+      },
+      {
+        "check": "Version diff",
+        "result": "by_rule_design",
+        "text": "A 3.3.5 -> 3.3.6 diff would list flatmap-stream under 'dependencies added'. Not run: npm removed 3.3.6."
+      },
+      {
+        "check": "Static behaviour rules",
+        "result": "uncertain",
+        "text": "The payload decrypts and compiles code in memory. Tracii looks for eval / new Function and createCipheriv, so this may be missed. Not testable: the tarball was removed from npm."
+      }
+    ]
+  },
+  {
+    "id": "ua-parser-js-2021",
+    "title": "ua-parser-js: account takeover with install-time malware (2021)",
+    "attack_type": "Account takeover: malicious releases run a downloader at install time",
+    "target": {
+      "package": "ua-parser-js",
+      "bad_versions": [
+        "0.7.29",
+        "0.8.0",
+        "1.0.0"
+      ],
+      "safe_advice": "0.7.30, 0.8.1 or 1.0.1 and later (GHSA-pjwm-rvh2-c87w)",
+      "if_installed": "The advisory says any machine that installed it should be considered fully compromised: rotate its secrets from a different machine."
+    },
+    "injected": null,
+    "advisories": [
+      "GHSA-pjwm-rvh2-c87w"
+    ],
+    "steps": [
+      {
+        "date": "2021-10-22 12:15 UTC",
+        "stage": "inject",
+        "text": "Three malicious versions (0.7.29, 0.8.0, 1.0.0) are published within one minute. npm later marks the package 'hijacked'.",
+        "techniques": [
+          "T1195.001"
+        ],
+        "sources": [
+          "https://registry.npmjs.org/ua-parser-js",
+          "https://github.com/faisalman/ua-parser-js/issues/536"
+        ]
+      },
+      {
+        "date": "2021-10-22",
+        "stage": "payload",
+        "text": "A preinstall script downloads and runs binaries during npm install: a cryptominer, and on Windows a DLL that reads browser data and credentials.",
+        "techniques": [
+          "T1546.016",
+          "T1105",
+          "T1496",
+          "T1555.003"
+        ],
+        "sources": [
+          "https://github.com/faisalman/ua-parser-js/issues/536#issuecomment-949674742",
+          "https://github.com/faisalman/ua-parser-js/issues/536#issuecomment-949772496"
+        ]
+      },
+      {
+        "date": "2021-10-22 13:46 UTC",
+        "stage": "discover",
+        "text": "Issue #536 reports the compromised versions, about 90 minutes after publication.",
+        "techniques": [],
+        "sources": [
+          "https://github.com/faisalman/ua-parser-js/issues/536"
+        ]
+      },
+      {
+        "date": "2021-10-22 16:16 UTC",
+        "stage": "contain",
+        "text": "Clean releases 0.7.30, 0.8.1 and 1.0.1 are published about four hours after the attack. The advisory says any machine that installed an affected version should be considered fully compromised and its secrets rotated.",
+        "techniques": [],
+        "sources": [
+          "https://registry.npmjs.org/ua-parser-js",
+          "https://osv.dev/vulnerability/GHSA-pjwm-rvh2-c87w"
+        ]
+      }
+    ],
+    "detection": [
+      {
+        "check": "OSV (known vulnerability)",
+        "result": "measured",
+        "text": "Today OSV returns GHSA-pjwm-rvh2-c87w (CVE-2021-4229) for all three versions (queried 2026-10-29)."
+      },
+      {
+        "check": "Static behaviour rules",
+        "result": "by_rule_design",
+        "text": "Any lifecycle script raises TRACII-INSTALL-SCRIPT; an install entry file that starts processes or uses the network raises TRACII-INSTALL-NET-EXEC. Not run: npm removed the malicious tarballs."
+      },
+      {
+        "check": "Version diff",
+        "result": "by_rule_design",
+        "text": "A 0.7.28 -> 0.7.29 diff reports an added install script. Not run: 0.7.29 was removed."
+      }
+    ]
+  },
+  {
+    "id": "colors-2022",
+    "title": "colors: maintainer sabotage (2022)",
+    "attack_type": "Sabotage from the project's own repository: an infinite loop causes denial of service",
+    "target": {
+      "package": "colors",
+      "bad_versions": [
+        "1.4.1",
+        "1.4.2",
+        "1.4.44-liberty-2"
+      ],
+      "safe_advice": "1.4.0 (GHSA-5rqg-jm4f-cqx7)",
+      "if_installed": "Any process that loads it prints garbage and hangs in an infinite loop (denial of service)."
+    },
+    "injected": null,
+    "advisories": [
+      "GHSA-5rqg-jm4f-cqx7",
+      "GHSA-gh88-3pxp-6fm8"
+    ],
+    "steps": [
+      {
+        "date": "2022-01-08",
+        "stage": "inject",
+        "text": "colors 1.4.44-liberty-2 and 1.4.1 are published, followed by 1.4.2 on 9 January, with code from commits in the project's own repository.",
+        "techniques": [
+          "T1195.001"
+        ],
+        "sources": [
+          "https://registry.npmjs.org/colors",
+          "https://osv.dev/vulnerability/GHSA-5rqg-jm4f-cqx7"
+        ]
+      },
+      {
+        "date": "2022-01-08",
+        "stage": "payload",
+        "text": "Every app that loads colors prints randomized characters to the console and enters an infinite loop, consuming resources without bound.",
+        "techniques": [
+          "T1499"
+        ],
+        "sources": [
+          "https://osv.dev/vulnerability/GHSA-5rqg-jm4f-cqx7"
+        ]
+      },
+      {
+        "date": "2022-01-10",
+        "stage": "contain",
+        "text": "GHSA-5rqg-jm4f-cqx7 is published. Users are told to downgrade to 1.4.0.",
+        "techniques": [],
+        "sources": [
+          "https://osv.dev/vulnerability/GHSA-5rqg-jm4f-cqx7"
+        ]
+      }
+    ],
+    "detection": [
+      {
+        "check": "OSV (known vulnerability)",
+        "result": "measured",
+        "text": "Today OSV returns GHSA-5rqg-jm4f-cqx7 and GHSA-gh88-3pxp-6fm8 for all three versions (queried 2026-10-29)."
+      },
+      {
+        "check": "Static behaviour rules",
+        "result": "not_detected",
+        "text": "Tracii has no rule for infinite loops or console sabotage, so it would not have flagged these versions before an advisory existed."
+      }
+    ]
+  },
+  {
+    "id": "node-ipc-2022",
+    "title": "node-ipc: geo-targeted protestware (2022)",
+    "attack_type": "Code added by the maintainer overwrites files for users in targeted locations",
+    "target": {
+      "package": "node-ipc",
+      "bad_versions": [
+        "10.1.1",
+        "10.1.2"
+      ],
+      "safe_advice": "10.1.3 or later removes the destructive code; 11.x adds peacenotwar (GHSA-97m3-w2cp-4xx6, GHSA-3mpp-xfvh-qh37)",
+      "if_installed": "On machines in the targeted locations it overwrites arbitrary files; check for lost or altered files."
+    },
+    "injected": {
+      "package": "peacenotwar",
+      "version": "9.1.3"
+    },
+    "advisories": [
+      "GHSA-97m3-w2cp-4xx6",
+      "GHSA-8gr3-2gjw-jj7g",
+      "GHSA-3mpp-xfvh-qh37"
+    ],
+    "steps": [
+      {
+        "date": "2022-03-07",
+        "stage": "inject",
+        "text": "The maintainer publishes node-ipc 10.1.1 and 10.1.2 with embedded malicious code (CVE-2022-23812, critical).",
+        "techniques": [
+          "T1195.001"
+        ],
+        "sources": [
+          "https://registry.npmjs.org/node-ipc",
+          "https://osv.dev/vulnerability/GHSA-97m3-w2cp-4xx6"
+        ]
+      },
+      {
+        "date": "2022-03-07",
+        "stage": "payload",
+        "text": "The code checks the geolocation of the user's IP address and overwrites arbitrary files for targeted locations.",
+        "techniques": [
+          "T1480",
+          "T1485"
+        ],
+        "sources": [
+          "https://osv.dev/vulnerability/GHSA-97m3-w2cp-4xx6"
+        ]
+      },
+      {
+        "date": "2022-03-08",
+        "stage": "contain",
+        "text": "10.1.3 removes the destructive code. Later that day 11.0.0 adds the peacenotwar dependency, which writes a message to the user's desktop.",
+        "techniques": [],
+        "sources": [
+          "https://registry.npmjs.org/node-ipc",
+          "https://osv.dev/vulnerability/GHSA-3mpp-xfvh-qh37"
+        ]
+      },
+      {
+        "date": "2022-03-15",
+        "stage": "spread",
+        "text": "9.2.2 brings the same file-writing dependency to the 9.x line.",
+        "techniques": [],
+        "sources": [
+          "https://osv.dev/vulnerability/GHSA-8gr3-2gjw-jj7g"
+        ]
+      }
+    ],
+    "detection": [
+      {
+        "check": "OSV (known vulnerability)",
+        "result": "measured",
+        "text": "Today OSV returns GHSA-97m3-w2cp-4xx6 for 10.1.1 and 10.1.2, GHSA-8gr3-2gjw-jj7g for 9.2.2 and GHSA-3mpp-xfvh-qh37 for 11.0.0 (queried 2026-10-29)."
+      },
+      {
+        "check": "Version diff",
+        "result": "measured",
+        "text": "Measured 2026-10-29 on node-ipc 10.1.0 -> 11.0.0 (both still on npm): Tracii's diff reports one finding, 'New dependencies added' (peacenotwar@^9.1.3, low). It found no added install script, host or capability in node-ipc's own code; the file-writing behaviour lives in peacenotwar."
+      },
+      {
+        "check": "Static behaviour rules",
+        "result": "uncertain",
+        "text": "Not testable on 10.1.1 / 10.1.2: npm removed both tarballs."
+      }
+    ]
+  }
+]

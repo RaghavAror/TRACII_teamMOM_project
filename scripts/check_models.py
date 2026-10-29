@@ -37,7 +37,7 @@ def silent_wav(seconds: float = 1.0, rate: int = 16000) -> bytes:
 
 
 def tiny_png(w: int = 64, h: int = 64) -> bytes:
-    raw = b"".join(b"\x00" + bytes([200 if 16 < x < 48 and 16 < y < 48 else 30] * 3 for x in range(w)) for y in range(h))
+    raw = b"".join(b"\x00" + bytes([200 if 16 < x < 48 and 16 < y < 48 else 30 for x in range(w) for _ in range(3)]) for y in range(h))
     def chunk(t, d):
         return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) +

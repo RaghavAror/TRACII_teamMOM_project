@@ -111,7 +111,7 @@ def mock_http():
 def isolate_env(monkeypatch):
     from tracii.ai import meta_client
     meta_client.VERIFIED.clear()
-    for var in ("META_API_KEY", "GLIMMER_BASE_URL", "GLIMMER_MODEL", "SPARK_OPEN_BASE_URL", "SPARK_OPEN_MODEL",
+    for var in ("META_API_KEY", "GLIMMER_BASE_URL", "GLIMMER_MODEL", "GLIMMER_API_KEY", "SPARK_OPEN_BASE_URL", "SPARK_OPEN_MODEL",
                 "ENABLE_REPORT_IMAGES"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("OSV_MODE", "api")

@@ -1,7 +1,9 @@
 // Tracii frontend: no build step. All package-derived text is untrusted and is
 // rendered with textContent only (never innerHTML).
-const API = window.TRACII_API;
-const $ = (s, r = document) => r.querySelector(s);
+import { $, h, api, post } from "./ui.js";
+import { initGraph, focusPackage } from "./graph3d.js";
+import { runAgents } from "./agents-view.js";
+
 const SEV_ORDER = ["critical", "high", "medium", "low", "info", "unknown"];
 const CAT_LABEL = {
   known_vulnerability: "Known vulnerabilities",
@@ -11,28 +13,6 @@ const CAT_LABEL = {
 };
 let scan = null;
 let activeCat = "known_vulnerability";
-
-function h(tag, attrs = {}, ...kids) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") el.className = v;
-    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
-    else if (v !== undefined && v !== null && v !== false) el.setAttribute(k, v);
-  }
-  for (const kid of kids.flat()) {
-    if (kid === null || kid === undefined || kid === false) continue;
-    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
-  }
-  return el;
-}
-
-async function api(path, opts = {}) {
-  const res = await fetch(API + path, opts);
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
-  return body;
-}
-const post = (path, data) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data || {}) });
 
 // ---------- intake ----------
 document.querySelectorAll("#intake .tabs button").forEach((b) => b.addEventListener("click", () => {
@@ -73,7 +53,12 @@ async function poll(id) {
   for (;;) {
     const s = await api(`/api/scans/${id}`);
     prog.replaceChildren(...s.progress.map((p) => h("div", {}, "✓ " + p)));
-    if (s.status === "done") { scan = s; render(); return; }
+    if (s.status === "done") {
+      scan = s;
+      render();
+      initGraph(scan, { onOpenFinding: openFinding });
+      return;
+    }
     if (s.status === "failed") throw new Error(s.error || "unknown error");
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -136,10 +121,22 @@ function pathView(f) {
     p.dev_only ? h("span", { class: "tag" }, "dev only") : null)));
 }
 
+function openFinding(id) {
+  const f = scan.result.findings.find((x) => x.id === id);
+  if (!f) return;
+  activeCat = f.category;
+  render();
+  showDetail(f);
+  $("#detail").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function showDetail(f) {
   const d = $("#detail");
   const aiBox = h("div", { class: "ai" });
   const fixBox = h("div", { class: "fix" });
+  const agentBox = h("div", { class: "ai" });
+  const mission = h("select", { title: "SSVC Mission & Well-being impact: how much harm a compromise of this app would do. Your call; Tracii cannot know it." },
+    ["low", "medium", "high"].map((v) => h("option", { value: v, selected: v === "medium" }, `mission impact: ${v}`)));
   d.replaceChildren(
     h("h3", {}, f.title),
     h("div", { class: "row" }, h("span", { class: `sev ${f.severity}` }, f.severity), h("span", { class: "tag" }, CAT_LABEL[f.category]),
@@ -147,6 +144,7 @@ function showDetail(f) {
     h("p", { class: "mono" }, `${f.package}@${f.version} · ${f.rule_or_advisory}`, f.aliases.length ? ` (${f.aliases.join(", ")})` : ""),
     h("h4", {}, "Evidence"), evidenceList(f),
     h("h4", {}, "Impact path"), pathView(f),
+    h("button", { class: "ghost", onclick: (e) => { if (!focusPackage(`${f.package}@${f.version}`)) e.target.textContent = "Not drawn in the 3D view"; } }, "Show in 3D graph"),
     h("h4", {}, "Unknowns / limitations"), h("ul", {}, f.limitations.map((l) => h("li", { class: "muted" }, l))),
     h("h4", {}, "AI investigation"),
     h("div", { class: "row" },
@@ -154,6 +152,10 @@ function showDetail(f) {
       h("button", { class: "ghost", onclick: () => explain(f, aiBox, true, false) }, "Deep investigation (Wonder)"),
       h("button", { class: "ghost", onclick: () => explain(f, aiBox, false, true) }, "+ independent assessment")),
     aiBox,
+    h("h4", {}, "Multi-agent investigation"),
+    h("p", { class: "muted" }, "Methodology agents (SSVC + EPSS + KEV, MITRE ATT&CK, SLSA provenance + OpenSSF Scorecard, STRIDE) run in parallel; a judge reconciles them and Spark Open reviews independently."),
+    h("div", { class: "row" }, h("button", { onclick: () => runAgents(scan.scan_id, f, agentBox, mission.value) }, "Run investigation agents"), mission),
+    agentBox,
     h("h4", {}, "Next step"),
     h("div", { class: "row" }, h("button", { onclick: () => proposeFix(f, fixBox) }, "Propose fix")),
     fixBox,

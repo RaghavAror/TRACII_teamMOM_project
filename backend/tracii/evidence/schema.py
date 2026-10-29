@@ -50,7 +50,7 @@ class RemediationStatus(str, Enum):
 
 class Evidence(BaseModel):
     id: str
-    kind: Literal["advisory", "code", "metadata", "install_script", "lockfile", "diff", "scanner_output"]
+    kind: Literal["advisory", "code", "metadata", "install_script", "lockfile", "diff", "scanner_output", "threat_intel"]
     summary: str
     file: str | None = None
     line: int | None = None

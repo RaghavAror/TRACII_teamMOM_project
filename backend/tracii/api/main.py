@@ -9,9 +9,12 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
-from tracii.ai import investigator, models
+from tracii import replay
+from tracii.ai import agents, investigator, models
 from tracii.ai.grounding import SYSTEM_PROMPT
 from tracii.ai.meta_client import ModelUnavailable
 from tracii.diff.version_diff import diff_packages
@@ -144,7 +147,8 @@ def get_scan(scan_id: str) -> dict:
 
 @app.get("/api/scans/{scan_id}/graph")
 def get_graph(scan_id: str) -> dict:
-    return DependencyGraph(_record(scan_id).result.inventory).graph_json()
+    result = _record(scan_id).result
+    return DependencyGraph(result.inventory).graph_json(result.findings)
 
 
 class ExplainRequest(BaseModel):
@@ -162,6 +166,46 @@ def explain(scan_id: str, finding_id: str, body: ExplainRequest) -> dict:
     if body.independent:
         result["independent_assessments"] = investigator.independent_assessments(f, slices, result)
     return result
+
+
+class AgentsRequest(BaseModel):
+    mission_impact: Literal["low", "medium", "high"] = "medium"
+    independent: bool = True
+
+
+@app.post("/api/scans/{scan_id}/findings/{finding_id}/agents")
+def investigate_agents(scan_id: str, finding_id: str, body: AgentsRequest) -> dict:
+    """Methodology agents (SSVC / ATT&CK / SLSA+Scorecard / STRIDE) + judge + open-weight reviewer."""
+    rec = _record(scan_id)
+    f = _finding(rec, finding_id)
+    pf = rec.package_files.get(f"{f.package}@{f.version}")
+    slices = slices_for_finding(f, pf.files) if pf else []
+    return agents.investigate(f, slices, models.meta_client(), mission_impact=body.mission_impact,
+                              independent=body.independent, defer_reviews=True)
+
+
+@app.get("/api/reviews/{review_id}")
+def get_reviews(review_id: str) -> dict:
+    """Open-weight reviews of an agent investigation; `done` is false while any is still running."""
+    out = agents.review_status(review_id)
+    if out is None:
+        raise HTTPException(404, "review not found (the server may have restarted)")
+    return out
+
+
+# ---------- attack replays ----------
+
+@app.get("/api/replays")
+def list_replays() -> list[dict]:
+    return [{k: s[k] for k in ("id", "title", "attack_type", "target", "advisories")} for s in replay.SCENARIOS]
+
+
+@app.post("/api/scans/{scan_id}/replays/{scenario_id}")
+def run_replay(scan_id: str, scenario_id: str) -> dict:
+    scenario = replay.get(scenario_id)
+    if not scenario:
+        raise HTTPException(404, "unknown replay scenario")
+    return replay.replay(scenario, _record(scan_id).result.inventory)
 
 
 # ---------- fix + rescan ----------

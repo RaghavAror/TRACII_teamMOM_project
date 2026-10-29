@@ -53,13 +53,19 @@ def meta_client() -> MetaClient:
 
 
 def open_weight_clients() -> dict[str, tuple[OpenAICompatClient, str]]:
-    """Optional independent assessors on OpenAI-compatible servers (vLLM/SGLang/hosted)."""
+    """Optional independent assessors on OpenAI-compatible servers (vLLM/SGLang/hosted).
+
+    Free hosted tiers can take minutes on long prompts (Glimmer on NVIDIA: ~140 s for the judge
+    prompt), so they get one long attempt instead of retries that multiply the wait.
+    """
+    timeout = float(os.environ.get("OPEN_WEIGHT_TIMEOUT", "240"))
     out = {}
     for key in ("GLIMMER", "SPARK_OPEN"):
         base = os.environ.get(f"{key}_BASE_URL")
         model = os.environ.get(f"{key}_MODEL")
         if base and model:
-            out[key.lower()] = (OpenAICompatClient(base, os.environ.get(f"{key}_API_KEY", "none")), model)
+            out[key.lower()] = (OpenAICompatClient(base, os.environ.get(f"{key}_API_KEY", "none"),
+                                                   timeout=timeout, retries=0), model)
     return out
 
 

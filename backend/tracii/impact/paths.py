@@ -68,16 +68,47 @@ class DependencyGraph:
                 out.extend(self.paths_to(path))
         return out
 
-    def graph_json(self) -> dict:
-        """Compact node/edge list for the UI path explorer."""
-        return {
-            "nodes": [
-                {"id": p, "label": self.label(p), "direct": n.direct, "dev": n.dev,
-                 "install_script": n.has_install_script}
-                for p, n in self.nodes.items()
-            ],
-            "edges": [
-                {"from": p, "to": c} for p, n in self.nodes.items() for c in n.dependencies.values()
-            ],
-            "roots": self.direct,
-        }
+    def _reverse(self) -> dict[str, set[str]]:
+        rev: dict[str, set[str]] = {p: set() for p in self.nodes}
+        for p, n in self.nodes.items():
+            for c in n.dependencies.values():
+                if c in rev:
+                    rev[c].add(p)
+        for d in self.direct:
+            rev[d].add(APP)
+        return rev
+
+    def dependent_waves(self, target_path: str) -> list[list[str]]:
+        """Everything that (transitively) depends on target, grouped by distance; ends at APP if reachable."""
+        rev, seen, waves = self._reverse(), {target_path}, []
+        frontier = [target_path]
+        while frontier:
+            nxt = sorted({p for cur in frontier for p in rev.get(cur, ()) if p not in seen})
+            if not nxt:
+                break
+            seen.update(nxt)
+            waves.append(nxt)
+            frontier = [p for p in nxt if p != APP]
+        return waves
+
+    def graph_json(self, findings: list | None = None) -> dict:
+        """Node/edge list for the 3D view. Findings are summarised per node, categories kept apart."""
+        rev = self._reverse()
+        flagged: dict[tuple[str, str], dict[str, list]] = {}
+        for f in findings or []:
+            flagged.setdefault((f.package, f.version), {}).setdefault(f.category.value, []).append(
+                {"id": f.id, "severity": f.severity.value, "rule": f.rule_or_advisory})
+        reach: dict[str, bool] = {}   # is the node reachable from a production (non-dev) direct dependency?
+        for d in self.direct:
+            if self.nodes[d].name not in self.declared_dev:
+                reach.update(dict.fromkeys(self._bfs_from(d), True))
+        nodes = [{"id": APP, "label": APP, "app": True}]
+        for p, n in self.nodes.items():
+            nodes.append({"id": p, "label": self.label(p), "name": n.name, "version": n.version,
+                          "direct": n.direct, "dev_only": not reach.get(p, False),
+                          "install_script": n.has_install_script, "dependents": len(rev[p] - {APP}),
+                          "findings": flagged.get((n.name, n.version), {})})
+        edges = [{"source": APP, "target": d} for d in self.direct]
+        edges += [{"source": p, "target": c} for p, n in self.nodes.items() for c in n.dependencies.values()
+                  if c in self.nodes]
+        return {"nodes": nodes, "edges": edges, "roots": self.direct, "app": APP}

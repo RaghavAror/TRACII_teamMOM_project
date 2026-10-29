@@ -1,6 +1,9 @@
 :root {
   --bg: #f6f7f9; --card: #fff; --ink: #1b2430; --muted: #66707d; --line: #e2e5ea; --accent: #1f4e79;
   --crit: #8b1a1a; --high: #c0392b; --med: #d68910; --low: #2e86c1; --info: #7f8c8d; --ok: #1e8449;
+  /* 3D graph: always drawn on a dark canvas so colours read the same in both themes */
+  --g-bg: #0d1218; --g-clean: #5f7f99; --g-dev: #3a4652; --g-mal: #a35bd6; --g-target: #ff3b30;
+  --g-ghost: #ff2d95; --g-wave: #19d3c5; --g-hl: #7ff0e6; --g-link: #34404c; --g-dim: #222b34;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 @media (prefers-color-scheme: dark) {
@@ -55,3 +58,39 @@ pre.snippet, pre.diff { background: var(--bg); border: 1px solid var(--line); pa
 .cite { font-size: 11px; margin-left: 2px; }
 dialog { max-width: 900px; width: calc(100% - 32px); border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); }
 footer { text-align: center; color: var(--muted); font-size: 12px; padding: 24px 16px; }
+
+/* 3D graph + replays */
+.graph-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 12px; }
+@media (max-width: 900px) { .graph-wrap { grid-template-columns: 1fr; } }
+#graph3d { height: 520px; border-radius: 8px; overflow: hidden; background: var(--g-bg); position: relative; }
+@media (max-width: 600px) { #graph3d { height: 380px; } }
+#graph-info { border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 520px; overflow-y: auto; }
+#graph-info h3 { font-size: 13px; }
+.pad { padding: 16px; }
+.graph-bar { justify-content: space-between; margin-bottom: 8px; }
+.graph-bar input { flex: none; min-width: 0; margin-right: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+.linklike { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
+.replay-note { padding: 8px 12px; border-radius: 6px; border-left: 4px solid var(--g-wave); background: var(--bg); margin: 10px 0; }
+.replay-note.in_project { border-color: var(--high); }
+.timeline { padding-left: 18px; }
+.timeline li { padding: 6px 8px; border-radius: 6px; margin-bottom: 6px; transition: background .3s; }
+.timeline li.active { background: color-mix(in srgb, var(--g-wave) 16%, transparent); }
+.tag.stage-inject, .tag.stage-payload { border-color: var(--high); color: var(--high); }
+.tag.stage-spread { border-color: var(--med); color: var(--med); }
+.tag.det-measured { border-color: var(--ok); color: var(--ok); }
+.tag.det-not_detected { border-color: var(--high); color: var(--high); }
+.tag.det-uncertain, .tag.det-by_rule_design { border-color: var(--med); color: var(--med); }
+
+/* multi-agent panel */
+.agents { display: grid; gap: 10px; margin: 10px 0; }
+.agent, .judge { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.judge { border-color: var(--accent); }
+table.mini { width: auto; font-size: 12px; } table.mini td, table.mini th { padding: 3px 8px; }
+.tag.ssvc-act, .tag.prio-act_now { background: var(--crit); color: #fff; border-color: var(--crit); }
+.tag.ssvc-attend, .tag.prio-attend { border-color: var(--high); color: var(--high); }
+.tag.ssvc-tracks, .tag.ssvc-track, .tag.prio-track { border-color: var(--low); color: var(--low); }
+.tag.prio-insufficient_evidence { border-color: var(--info); color: var(--info); }
+.tag.ctl-strong { border-color: var(--ok); color: var(--ok); }
+.tag.ctl-weak, .tag.ctl-missing { border-color: var(--med); color: var(--med); }

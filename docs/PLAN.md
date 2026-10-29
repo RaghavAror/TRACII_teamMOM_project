@@ -49,6 +49,14 @@ Status key: ✅ done in baseline · 🟡 partial · ⬜ not started
 - [ ] 3-minute demo script; a backup recording of a local run.
 **Accept:** the public URL completes a demo scan in under 60 s; the model-status dialog matches `results/model_checks.json`.
 
+### M7 · Graph, replays, multi-agent (29 Oct) ✅ — live models
+- [x] 3D dependency graph of the user's project (`/api/scans/{id}/graph` with per-node findings, dependents count, dev-only flag).
+- [x] Attack replays: 4 sourced incidents, `in_project` vs labelled `simulated` mode, blast-radius waves (`/api/replays`, `/api/scans/{id}/replays/{rid}`).
+- [x] Methodology agents + judge + Spark Open reviewer (`/api/scans/{id}/findings/{fid}/agents`); SSVC from the official CISA table.
+- [x] Glimmer via the NVIDIA API catalog (free credits). Reviews moved to the background because a free tier takes ~140 s on the judge prompt.
+- [ ] Voice Q&A with real speech in Chrome; SAM upload UI.
+**Accept:** browser run without console errors; every agent claim cites an existing evidence ID; the replay says SIMULATION when the package is absent.
+
 ## Top 3 technical risks
 
 | # | Risk | Mitigation (in this baseline) |
@@ -67,4 +75,10 @@ Status key: ✅ done in baseline · 🟡 partial · ⬜ not started
 | GuardDog on demo deps (after manifest fix) | 0 threat findings, 4 info capability findings |
 | Fix lodash 4.17.20 → 4.18.0 + real rescan | 5 fixed, 0 new, `verified_fixed`, 20.4 s |
 | `evaluate.py --guarddog`, 4 self-written fixtures | Tracii static 3/3 malicious flagged, 0/1 benign FP; GuardDog (≥medium) 1/3, 0/1 FP. **Circular: fixtures written with the rules in mind. Do not quote as a detection rate.** |
-| Meta models | **Not yet called**: no `META_API_KEY` in this environment |
+| Meta models (29 Oct) | **5/5 live PASS** with `scripts/check_models.py`: Spark 1.3 1.9 s, Wonder 1.7 s, Voice 1.3 s, SAM 3.1 1.2 s, Spark Open on Baseten 1.2 s. Muse Image not called (billed per image). |
+| Bugs found by the first live run (29 Oct) | Voice transcription crashed before sending (`headers` passed twice); the check script's test PNG generator had a type error. Both fixed; the mocked tests had missed both. |
+| Multi-agent, live (29 Oct) | lodash CVE-2021-23337: SSVC **track**, judge track, Spark Open agrees (67 s, sequential judge). fake-exfil fixture: ATT&CK T1552/T1027, judge + Spark Open insufficient_evidence (43 s). minimist in the browser: judge track, Spark Open **disagrees** (shown). |
+| Replay detection check (29 Oct) | Malicious versions of all 4 incidents have been removed from npm, so Tracii could not be tested on the real payloads. Measured instead: `/api/diff` node-ipc 10.1.0 → 11.0.0 reports `peacenotwar@^9.1.3` added (1 low finding, no install script / host / capability change). |
+| Browser end-to-end (29 Oct, headless Chromium, SwiftShader WebGL) | Demo scan → 3D graph (53 packages, 89 edges) → event-stream replay (simulated on statuses@1.5.0) → agents on minimist; upload with colors@1.4.1 → in-project replay. 0 console errors. |
+| Glimmer live (29 Oct) | NVIDIA `meta/muse-glimmer-30b`: ping PASS (2 s warm, 242 s on first call); judge prompt 138 s, priority track = Wonder judge. Before the fix, a timed-out Glimmer stretched one investigation to 303 s; now the judge answers without waiting. One background run returned an empty answer; with an explicit 16k output budget, 3/3 later runs answered (135 s, 144 s, 201 s; all track = judge). Browser: judge at 52 s, Spark Open agrees at 52 s, Glimmer agrees at 233 s, 0 console errors. Also fixed: review rows rendered as "[object HTMLDivElement]". |
+| Unit tests (29 Oct) | 65 passed (+1: deferred reviews); earlier 64 (13 new: SSVC table, citation validation, KEV override, enrichment failure, reviewer, graph overlay, replays, endpoints) |

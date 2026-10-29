@@ -33,6 +33,11 @@
 │        ↓                                                                                               │
 │ 7 FIX+VERIFY    remediation.py: proposal diff → npm --package-lock-only --ignore-scripts → rescan      │
 │                 → fixed / remaining / new / newly_covered; VERIFIED only if a rescan really ran         │
+│        ↓                                                                                               │
+│ 8 AGENTS        enrich.py: EPSS · KEV · npm provenance · Scorecard → evidence items with IDs          │
+│   (on demand)   agents.py: SSVC | ATT&CK | SLSA+Scorecard | STRIDE in parallel (Spark 1.3)           │
+│                 → judge (Wonder) ∥ independent reviewer (Spark Open, Baseten); SSVC outcome computed  │
+│ 9 GRAPH+REPLAY  paths.graph_json (findings per node) · replay/ (4 sourced incidents, blast waves)      │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
