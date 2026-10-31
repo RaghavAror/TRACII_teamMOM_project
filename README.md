@@ -19,7 +19,7 @@ Three investigation views sit on top of the scan:
 ## Quick start (Codespaces or local)
 
 ```bash
-bash scripts/setup_dev.sh          # venv, deps, osv-scanner binary, GuardDog docker image, .env from template
+bash scripts/setup_dev.sh          # venv, deps, osv-scanner binary, GuardDog (docker image, or its own venv without Docker), .env from template
 # optional: put META_API_KEY, a Baseten key (Spark Open) and an NVIDIA key (Glimmer) in .env; see .env.example. Never commit it.
 bash scripts/dev.sh                # API + UI on http://localhost:8000 (Codespaces: open forwarded port 8000)
 ```
@@ -33,6 +33,44 @@ cd backend && ../.venv/bin/python -m pytest -q          # offline test suite
 .venv/bin/python scripts/check_models.py                # live probe of each configured model → results/model_checks.json
 # measured model status and latencies: docs/MODELS.md
 ```
+
+## CI gate, SARIF and SBOM
+
+Add Tracii to any repo with a `package-lock.json`:
+
+```yaml
+# .github/workflows/tracii.yml
+on: [pull_request, push]
+permissions: { contents: read, security-events: write }   # security-events: SARIF upload
+jobs:
+  tracii:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: RaghavAror/TRACII_teamMOM_project@main
+        with:
+          fail-on: high              # critical | high | medium | low | none
+          mode: enforce              # observe = report only, never fail the job
+          sbom-file: sbom.cdx.json   # optional CycloneDX 1.5 SBOM
+```
+
+The job writes a markdown report to the run summary, uploads SARIF to the **Security → Code scanning** tab
+(each finding points at its entry in `package-lock.json`), and exits **0** pass · **1** blocking findings ·
+**2** incomplete scan (OSV or the inventory could not run, so "no findings" would not mean anything). Unknown severities are
+listed, never silently gated; use `fail-on-unknown: true` to gate them. All inputs: [action.yml](action.yml).
+
+Same thing locally or in any other CI:
+
+```bash
+cd backend
+../.venv/bin/python -m tracii scan --dir ../my-app --fail-on high --sarif tracii.sarif --sbom sbom.cdx.json
+../.venv/bin/python -m tracii sbom --dir ../my-app -o sbom.cdx.json      # SBOM only: offline, no scan
+```
+
+In the web UI, every finished scan has **Export: SARIF · SBOM** links (`GET /api/scans/{id}/sarif`, `/sbom`, `/gate`).
+The SBOM lists one component per name@version, with a purl, the SHA-512 from the lockfile, its scope (devDependencies
+are `excluded`) and the resolved dependency graph. Only OSV advisories go into its `vulnerabilities`; malicious-behaviour
+signals are detector output, not advisories, so they stay out of it.
 
 ## Layout
 
@@ -49,6 +87,9 @@ backend/tracii/
                Scorecard as citable evidence), ssvc_cisa.csv (official CISA table, pinned)
   replay/      scenarios.json (4 sourced incidents) + replay logic on the user's graph
   fix/         remediation.py (proposal → --package-lock-only --ignore-scripts → compare)
+  export/      sarif.py (SARIF 2.1.0 for code scanning), sbom.py (CycloneDX 1.5 JSON)
+  gate.py      CI pass/fail policy (enforce | observe, severity threshold, incomplete-scan rule) + markdown report
+  cli.py       `python -m tracii scan | sbom` (used by action.yml)
   api/main.py  FastAPI routes (+ serves frontend/ in dev)
 frontend/      static UI (no build step): app.js, graph3d.js (3d-force-graph from CDN + replays), agents-view.js
 fixtures/      demo project (real lockfile) + INERT malicious-like test packages

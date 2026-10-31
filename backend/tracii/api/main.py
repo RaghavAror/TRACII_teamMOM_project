@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from tracii import replay
+from tracii import gate, replay
 from tracii.ai import agents, investigator, models
 from tracii.ai.grounding import SYSTEM_PROMPT
 from tracii.ai.meta_client import ModelUnavailable
 from tracii.diff.version_diff import diff_packages
 from tracii.evidence.schema import RemediationStatus, ScanSource
 from tracii.evidence.slicing import slices_for_finding
+from tracii.export.sarif import to_sarif
+from tracii.export.sbom import to_cyclonedx
 from tracii.fix import remediation
 from tracii.impact.paths import DependencyGraph
 from tracii.intake import github, npm_registry
@@ -149,6 +153,39 @@ def get_scan(scan_id: str) -> dict:
 def get_graph(scan_id: str) -> dict:
     result = _record(scan_id).result
     return DependencyGraph(result.inventory).graph_json(result.findings)
+
+
+def _download(data: dict, filename: str, media_type: str) -> Response:
+    # Indented so the file is readable when opened in an editor; tools parse it the same either way.
+    return Response(json.dumps(data, indent=2, ensure_ascii=False) + "\n", media_type=media_type,
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/api/scans/{scan_id}/sarif")
+def get_sarif(scan_id: str) -> Response:
+    rec = _record(scan_id)
+    subdir = rec.result.source.subdir.strip("/")
+    uri = f"{subdir}/package-lock.json" if subdir else "package-lock.json"
+    return _download(to_sarif(rec.result, rec.lockfile.decode(errors="replace"), uri),
+                     f"tracii-{scan_id}.sarif", "application/sarif+json")
+
+
+@app.get("/api/scans/{scan_id}/sbom")
+def get_sbom(scan_id: str, vulnerabilities: bool = True) -> Response:
+    rec = _record(scan_id)
+    return _download(to_cyclonedx(rec.result, rec.package_json, include_vulnerabilities=vulnerabilities),
+                     f"tracii-{scan_id}.cdx.json", "application/vnd.cyclonedx+json")
+
+
+@app.get("/api/scans/{scan_id}/gate")
+def get_gate(scan_id: str, fail_on: Literal["critical", "high", "medium", "low", "none"] = "high",
+             fail_on_unknown: bool = False, ignore_dev: bool = False) -> dict:
+    result = _record(scan_id).result
+    verdict = gate.evaluate(result, gate.GatePolicy(fail_on=fail_on, fail_on_unknown=fail_on_unknown,
+                                                    include_dev=not ignore_dev))
+    return {"outcome": verdict.outcome, "blocking": [f.id for f in verdict.blocking],
+            "unknown_severity": [f.id for f in verdict.unknown], "failed_checks": verdict.failed_checks,
+            "markdown": gate.markdown_summary(result, verdict)}
 
 
 class ExplainRequest(BaseModel):

@@ -24,6 +24,7 @@ input, select, button { font: inherit; padding: 8px 10px; border-radius: 6px; bo
 input { min-width: 0; flex: 1; }
 button { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
 button.ghost { background: transparent; color: var(--accent); }
+.exports { margin: 6px 0; font-size: 13px; color: var(--muted); } .exports a { color: var(--accent); }
 form, .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .tabs { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
 .tabs button { background: transparent; color: var(--ink); border-color: var(--line); }

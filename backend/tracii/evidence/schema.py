@@ -122,7 +122,7 @@ class Inventory(BaseModel):
 
 
 class ScanSource(BaseModel):
-    kind: Literal["github", "upload", "fixture"]
+    kind: Literal["github", "upload", "fixture", "local"]
     label: str
     commit_sha: str | None = None
     ref: str | None = None

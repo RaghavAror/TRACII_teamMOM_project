@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q -r backend/requirements.txt -r backend/requirements-dev.txt
+      - run: python -m pytest -q
+        working-directory: backend
+
+  # Runs this repo's own action against the deliberately vulnerable demo project.
+  # Observe mode + no SARIF upload: the demo's findings are expected and must not
+  # become code-scanning alerts on this repository.
+  action-self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: tracii
+        uses: ./
+        with:
+          path: fixtures/projects/vulnerable-demo
+          mode: observe
+          upload-sarif: "false"
+          sbom-file: tracii.cdx.json
+          guarddog: "off"
+          deep-scan-limit: "5"
+      - name: Gate must detect the demo's known vulnerabilities
+        env:
+          OUTCOME: ${{ steps.tracii.outputs.outcome }}
+          BLOCKING: ${{ steps.tracii.outputs.blocking }}
+        run: |
+          echo "outcome=$OUTCOME blocking=$BLOCKING"
+          test "$OUTCOME" = "fail" && test "$BLOCKING" -gt 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tracii-reports
+          path: |
+            tracii.sarif
+            tracii.cdx.json
