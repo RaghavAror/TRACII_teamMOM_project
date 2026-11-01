@@ -1,0 +1,111 @@
+name: Tracii npm supply-chain gate
+description: >
+  Scan package.json + package-lock.json for known vulnerabilities (OSV) and malicious-behaviour
+  signals without installing anything. Fails the build above a severity threshold, writes SARIF
+  for GitHub code scanning and an optional CycloneDX SBOM.
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  path:
+    description: Directory (relative to the workspace) containing package.json and package-lock.json
+    default: "."
+  fail-on:
+    description: Lowest severity that fails the gate (critical | high | medium | low | none)
+    default: high
+  mode:
+    description: "enforce: fail the job on blocking findings · observe: report only, never fail"
+    default: enforce
+  categories:
+    description: Space-separated finding categories the gate considers
+    default: known_vulnerability malicious_indicator version_diff
+  fail-on-unknown:
+    description: Also gate findings whose severity is unknown
+    default: "false"
+  ignore-dev:
+    description: Ignore findings reached only through devDependencies
+    default: "false"
+  allow-incomplete:
+    description: Do not fail when a required check (inventory, OSV) could not run
+    default: "false"
+  deep-scan-limit:
+    description: How many prioritised package tarballs get malware-signal checks
+    default: "15"
+  sarif-file:
+    description: Where to write SARIF (empty to skip)
+    default: tracii.sarif
+  upload-sarif:
+    description: Upload the SARIF to GitHub code scanning (needs `security-events write` permission)
+    default: "true"
+  sbom-file:
+    description: Where to write a CycloneDX 1.5 JSON SBOM (empty to skip)
+    default: ""
+  guarddog:
+    description: GuardDog mode (auto | docker | local | off). auto uses Docker on hosted runners
+    default: auto
+
+outputs:
+  outcome:
+    description: pass | fail | incomplete
+    value: ${{ steps.scan.outputs.outcome }}
+  blocking:
+    description: Number of findings at or above the threshold
+    value: ${{ steps.scan.outputs.blocking }}
+  findings:
+    description: Total number of findings
+    value: ${{ steps.scan.outputs.findings }}
+  sarif:
+    description: Path of the SARIF file
+    value: ${{ steps.scan.outputs.sarif }}
+  sbom:
+    description: Path of the SBOM file
+    value: ${{ steps.scan.outputs.sbom }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install Tracii
+      shell: bash
+      run: python -m pip install -q -r "$GITHUB_ACTION_PATH/backend/requirements.txt"
+
+    - name: Scan and gate
+      id: scan
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        PYTHONPATH: ${{ github.action_path }}/backend
+        GUARDDOG_MODE: ${{ inputs.guarddog }}
+        NPM_RESOLVER: "off"
+        IN_PATH: ${{ inputs.path }}
+        IN_FAIL_ON: ${{ inputs.fail-on }}
+        IN_MODE: ${{ inputs.mode }}
+        IN_CATEGORIES: ${{ inputs.categories }}
+        IN_FAIL_ON_UNKNOWN: ${{ inputs.fail-on-unknown }}
+        IN_IGNORE_DEV: ${{ inputs.ignore-dev }}
+        IN_ALLOW_INCOMPLETE: ${{ inputs.allow-incomplete }}
+        IN_DEEP: ${{ inputs.deep-scan-limit }}
+        IN_SARIF: ${{ inputs.sarif-file }}
+        IN_SBOM: ${{ inputs.sbom-file }}
+      run: |
+        # Inputs arrive via env, never interpolated into the script, so they cannot inject shell.
+        args=(scan --dir "$IN_PATH" --fail-on "$IN_FAIL_ON" --mode "$IN_MODE" --deep-scan-limit "$IN_DEEP")
+        read -r -a cats <<< "$IN_CATEGORIES"
+        args+=(--categories "${cats[@]}")
+        [ "$IN_FAIL_ON_UNKNOWN" = "true" ] && args+=(--fail-on-unknown)
+        [ "$IN_IGNORE_DEV" = "true" ] && args+=(--ignore-dev)
+        [ "$IN_ALLOW_INCOMPLETE" = "true" ] && args+=(--allow-incomplete)
+        [ -n "$IN_SARIF" ] && args+=(--sarif "$IN_SARIF")
+        [ -n "$IN_SBOM" ] && args+=(--sbom "$IN_SBOM")
+        python -m tracii "${args[@]}"
+
+    - name: Upload SARIF to code scanning
+      if: always() && inputs.upload-sarif == 'true' && inputs.sarif-file != '' && steps.scan.outputs.sarif != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: tracii

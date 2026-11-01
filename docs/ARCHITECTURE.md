@@ -71,6 +71,16 @@
 | `POST /api/scans/{id}/ask/voice` | multipart `audio` (WAV 16 kHz mono) | `{transcript, answer, …}` |
 | `POST /api/scans/{id}/report/image` | – | `{label:"AI-generated illustration. Not evidence.", image_b64}`; 404 unless `ENABLE_REPORT_IMAGES=1` |
 | `POST /api/evidence/segment` | multipart `image` (PNG/JPEG), `prompt` | `{boxes[], interpretation, note}` |
+| `GET /api/scans/{id}/sarif` | – | SARIF 2.1.0 download (`application/sarif+json`); one result per finding, located at the package's lockfile entry |
+| `GET /api/scans/{id}/sbom?vulnerabilities=` | – | CycloneDX 1.5 JSON download; OSV advisories in `vulnerabilities` unless `false` |
+| `GET /api/scans/{id}/gate?fail_on=&fail_on_unknown=&ignore_dev=` | – | `{outcome: pass\|fail\|incomplete, blocking[], unknown_severity[], failed_checks[], markdown}` |
+
+### CI mode
+
+`python -m tracii scan` (tracii/cli.py) runs the same pipeline synchronously, then `gate.evaluate` applies the policy and
+`export/` writes SARIF / SBOM. `action.yml` (composite action) wraps it for GitHub Actions and uploads SARIF with
+`github/codeql-action/upload-sarif`. Exit codes: 0 pass · 1 blocking findings · 2 incomplete scan or bad input. A required
+check (`inventory`, `osv`) that did not run makes the result *incomplete*, never a pass. Observe mode always exits 0.
 
 ### Investigation output (model-facing strict schema + server fields)
 

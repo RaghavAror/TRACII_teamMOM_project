@@ -63,8 +63,31 @@ def _affected_ranges(vuln: dict, name: str) -> str:
     return ", ".join(parts) or "see advisory"
 
 
+def malicious_to_finding(vuln: dict, name: str, version: str, source: str) -> Finding:
+    """OSV MAL- records (OpenSSF malicious-packages) describe malware, not a bug: the whole
+    release is hostile, there is no 'fixed version' to upgrade to, and the action is removal."""
+    vid = vuln.get("id", "UNKNOWN")
+    fid = make_id("mal", name, version, vid)
+    return Finding(
+        id=fid, category=Category.MALICIOUS_INDICATOR, source=source, rule_or_advisory=vid,
+        title=f"Known malicious package: {vuln.get('summary') or 'reported in the OpenSSF malicious-packages database'}"[:200],
+        package=name, version=version, severity=Severity.CRITICAL, confidence=Confidence.HIGH,
+        aliases=list(vuln.get("aliases") or []),
+        evidence=[Evidence(
+            id=f"{fid}-adv", kind="advisory",
+            summary=f"{vid}: {name}@{version} is listed as malicious in OSV (affects {_affected_ranges(vuln, name)})",
+            url=f"https://osv.dev/vulnerability/{vid}", snippet=(vuln.get("details") or "")[:1500] or None)],
+        limitations=["Database match on the exact installed version; it covers malware that has already been "
+                     "reported, not new releases.",
+                     "Remove the package and rotate any credentials available where it was installed; "
+                     "do not upgrade to another version of an untrusted package."],
+    )
+
+
 def vuln_to_finding(vuln: dict, name: str, version: str, source: str) -> Finding:
     vid = vuln.get("id", "UNKNOWN")
+    if vid.startswith("MAL-"):
+        return malicious_to_finding(vuln, name, version, source)
     refs = vuln.get("references") or []
     advisory_url = next((r.get("url") for r in refs if r.get("type") == "ADVISORY"),
                         f"https://osv.dev/vulnerability/{vid}")

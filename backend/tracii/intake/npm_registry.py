@@ -24,6 +24,10 @@ MAX_TARBALL = 25 * 1024 * 1024
 MAX_UNPACKED = 80 * 1024 * 1024
 MAX_FILES = 5000
 MAX_TEXT_FILE = 1024 * 1024
+# Large JS (bundles) is kept aside and read only when an install script runs it: worm-style
+# payloads ship as multi-MB bundle.js, but scanning every big bundle would flood the rules.
+MAX_LARGE_JS = 10 * 1024 * 1024
+JS_FILE_EXT = (".js", ".cjs", ".mjs")
 TEXT_EXT = (".js", ".cjs", ".mjs", ".ts", ".json", ".sh", ".py", ".jsx", ".tsx", ".md", ".txt", ".yml", ".yaml")
 
 
@@ -42,6 +46,7 @@ class PackageFiles:
     manifest: dict
     files: dict[str, str] = field(default_factory=dict)   # relative path -> text
     skipped: list[str] = field(default_factory=list)
+    large: dict[str, str] = field(default_factory=dict)   # oversized JS (> MAX_TEXT_FILE), also listed in skipped
 
 
 def verify_integrity(blob: bytes, integrity: str | None) -> None:
@@ -67,7 +72,8 @@ def _safe_member_name(raw: str) -> str:
     return parts[1] if len(parts) == 2 else parts[0]
 
 
-def extract_in_memory(blob: bytes) -> tuple[dict[str, str], list[str]]:
+def extract_in_memory(blob: bytes, large: dict[str, str] | None = None) -> tuple[dict[str, str], list[str]]:
+    """Text files by relative path + skipped paths. Pass `large` to also collect oversized JS (see MAX_LARGE_JS)."""
     files: dict[str, str] = {}
     skipped: list[str] = []
     total = 0
@@ -89,6 +95,9 @@ def extract_in_memory(blob: bytes) -> tuple[dict[str, str], list[str]]:
                 raise UnsafeArchive("archive expands beyond size limit")
             if member.size > MAX_TEXT_FILE or not rel.lower().endswith(TEXT_EXT):
                 skipped.append(rel)
+                if large is not None and member.size <= MAX_LARGE_JS and rel.lower().endswith(JS_FILE_EXT):
+                    if fh := tar.extractfile(member):
+                        large[rel] = fh.read(MAX_LARGE_JS).decode("utf-8", errors="replace")
                 continue
             fh = tar.extractfile(member)
             if fh is None:
@@ -123,8 +132,9 @@ def fetch_package(name: str, version: str, client: httpx.Client) -> PackageFiles
             chunks.append(chunk)
     blob = b"".join(chunks)
     verify_integrity(blob, dist.get("integrity"))
-    files, skipped = extract_in_memory(blob)
-    return PackageFiles(name=name, version=version, manifest=meta, files=files, skipped=skipped)
+    large: dict[str, str] = {}
+    files, skipped = extract_in_memory(blob, large)
+    return PackageFiles(name=name, version=version, manifest=meta, files=files, skipped=skipped, large=large)
 
 
 def load_local_package(directory: str) -> PackageFiles:

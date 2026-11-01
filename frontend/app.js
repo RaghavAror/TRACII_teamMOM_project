@@ -71,6 +71,10 @@ function render() {
   const src = r.source;
   $("#source-line").textContent = `${src.kind}: ${src.label}` + (src.commit_sha ? ` @ ${src.ref} (${src.commit_sha})` : "") +
     ` · ${r.inventory.packages.length} packages · lockfile v${r.inventory.lockfile_version}`;
+  const base = `${window.TRACII_API}/api/scans/${encodeURIComponent(r.scan_id)}`;
+  $("#exports").replaceChildren("Export: ",
+    h("a", { href: `${base}/sarif`, download: `tracii-${r.scan_id}.sarif` }, "SARIF (code scanning)"), " · ",
+    h("a", { href: `${base}/sbom`, download: `tracii-${r.scan_id}.cdx.json` }, "SBOM (CycloneDX)"));
   $("#checks").replaceChildren(...r.checks.map((c) =>
     h("li", { class: `check ${c.status}` }, h("b", {}, c.name), ` ${c.status}`, c.packages_checked ? ` · ${c.packages_checked} pkgs` : "", h("div", { class: "muted" }, c.detail))));
   $("#warnings").replaceChildren(...r.inventory.warnings.map((w) => h("div", { class: "warn" }, "⚠ " + w)));

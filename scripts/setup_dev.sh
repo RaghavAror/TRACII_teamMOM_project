@@ -11,7 +11,15 @@ if ! command -v osv-scanner >/dev/null; then
   curl -fsSL -o .venv/bin/osv-scanner \
     https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_linux_amd64 && chmod +x .venv/bin/osv-scanner || true
 fi
-# GuardDog via Docker (avoids Python-version conflicts with its Semgrep dependency)
-if command -v docker >/dev/null; then docker pull -q ghcr.io/datadog/guarddog:latest || true; fi
+# GuardDog via Docker (avoids Python-version conflicts with its Semgrep dependency).
+# Without Docker, install it into its own venv and link it into .venv/bin so dev.sh finds it.
+if command -v docker >/dev/null; then
+  docker pull -q ghcr.io/datadog/guarddog:latest || true
+elif ! command -v guarddog >/dev/null && [ ! -x .venv-guarddog/bin/guarddog ]; then
+  { python3 -m venv .venv-guarddog \
+    && .venv-guarddog/bin/pip install -q --upgrade pip \
+    && .venv-guarddog/bin/pip install -q guarddog; } || echo "GuardDog install failed (optional); scans run without it"
+fi
+if [ -x .venv-guarddog/bin/guarddog ]; then ln -sf ../../.venv-guarddog/bin/guarddog .venv/bin/guarddog; fi
 [ -f .env ] || cp .env.example .env
 echo "Setup done. Run: bash scripts/dev.sh"
