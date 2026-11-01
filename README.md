@@ -21,9 +21,6 @@ the evidence behind it, what to change, and a rescan that proves the fix worked.
 
 ---
 
-> [!IMPORTANT]
-> Results say what these checks detected. "No issue detected by these checks" is **not** a guarantee that a package is safe.
-
 ## 💡 Why TRACII?
 
 A typical JavaScript app pulls in hundreds or thousands of packages, and most of them were never chosen by you: they
