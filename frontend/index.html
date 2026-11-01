@@ -16,7 +16,7 @@
   <nav class="nav">
     <a href="#intake">Scan</a>
     <a href="#evaluation">Evaluation</a>
-    <a href="#ci">CI gate</a>
+    <a href="#guide" class="open-guide">Guide</a>
     <button id="models-btn" class="ghost sm"><span id="models-dot" class="dot"></span>Model intelligence</button>
   </nav>
 </header>
@@ -39,7 +39,10 @@
 
   <section id="intake" class="card intake">
     <div class="intake-head">
-      <h2>Start an investigation</h2>
+      <div>
+        <h2>Start an investigation</h2>
+        <button type="button" class="guide-link open-guide">New here? Read the 2-minute guidebook →</button>
+      </div>
       <div class="tabs seg" role="tablist">
         <button data-tab="fixture" class="active">Demo project</button>
         <button data-tab="github">GitHub repo</button>
@@ -166,34 +169,93 @@
     <div id="diff-out"></div>
   </section>
 
-  <div class="grid two">
-    <section class="card" id="ci">
-      <h2>Add the gate to CI <small>example configuration</small></h2>
-      <p class="muted">The same scan as a GitHub Action (inputs from <span class="mono">action.yml</span>): fails the build on blocking findings, uploads SARIF to the
-        Security tab and writes a CycloneDX SBOM. Exit codes: <b>0</b> pass · <b>1</b> blocking findings · <b>2</b> incomplete scan.
-        After a scan, the live gate decision for that project appears with the results.</p>
-      <pre class="snippet">on: [pull_request, push]
-permissions: { contents: read, security-events: write }
-jobs:
-  tracii:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: RaghavAror/TRACII_teamMOM_project@main
-        with:
-          fail-on: high            # critical | high | medium | low | none
-          mode: enforce            # observe = report only
-          sbom-file: sbom.cdx.json</pre>
-      <p class="muted">Locally: <span class="mono">python -m tracii scan --dir my-app --fail-on high --sarif tracii.sarif --sbom sbom.cdx.json</span></p>
-    </section>
-
-    <section class="card" id="evaluation">
+  <section class="card" id="evaluation">
       <h2>Evaluation <small>fixed benchmark · not computed from your scan</small></h2>
       <div id="eval-out"><p class="muted">Loading benchmark…</p></div>
     </section>
-  </div>
 </main>
 
+<dialog id="guide-dialog" class="guide" aria-labelledby="guide-title">
+  <div class="guide-head">
+    <div><p class="eyebrow">Guidebook · 2-minute read</p><h2 id="guide-title">Learn TRACII</h2></div>
+    <form method="dialog"><button class="ghost sm" aria-label="Close guidebook">Close</button></form>
+  </div>
+  <nav class="guide-toc">
+    <a href="#g-what">What is TRACII?</a><a href="#g-how">How it works</a><a href="#g-terms">Key terms</a>
+    <a href="#g-report">Reading your report</a><a href="#g-limits">Limitations</a>
+  </nav>
+
+  <section id="g-what">
+    <h3>What is TRACII?</h3>
+    <p>TRACII is an AI-powered application and software supply-chain security platform that investigates software dependencies,
+      detects vulnerabilities and suspicious behaviour, traces their impact on your application, and recommends evidence-backed fixes.</p>
+    <p class="muted">Today it analyses npm projects (package.json + package-lock.json).</p>
+  </section>
+
+  <section id="g-how">
+    <h3>How TRACII works</h3>
+    <ol class="flow">
+      <li><b>Scan</b><span>Connect a public GitHub repository, upload package.json + package-lock.json, or try a demo project.</span></li>
+      <li><b>Detect</b><span>Identify known vulnerabilities, known malicious packages and suspicious code behaviour, without installing or running any package.</span></li>
+      <li><b>Trace</b><span>Map direct and transitive dependencies and see the path each risk takes into your application.</span></li>
+      <li><b>Investigate</b><span>Use Meta AI models and investigation agents to explain findings, analyse the evidence and assess potential impact.</span></li>
+      <li><b>Fix &amp; Verify</b><span>Get a proposed dependency change, simulate it in an isolated sandbox and rescan to verify it worked. You decide whether to apply it; TRACII never modifies your repository.</span></li>
+    </ol>
+  </section>
+
+  <section id="g-terms">
+    <h3>Key terminology</h3>
+    <dl class="terms">
+      <dt>Dependency</dt><dd>An external software package that an application uses.</dd>
+      <dt>Direct dependency</dt><dd>A package explicitly included by your application.</dd>
+      <dt>Transitive dependency</dt><dd>A package brought in through another dependency.</dd>
+      <dt>Vulnerability</dt><dd>A security weakness that could potentially be exploited.</dd>
+      <dt>Malware</dt><dd>Software designed to perform harmful or unauthorised actions.</dd>
+      <dt>SCA (Software Composition Analysis)</dt><dd>Analysing third-party software components for security and licence risks.</dd>
+      <dt>SBOM (Software Bill of Materials)</dt><dd>A structured inventory of the software components and dependencies used by an application.</dd>
+      <dt>CycloneDX</dt><dd>A standard format for representing and exchanging an SBOM.</dd>
+      <dt>SARIF</dt><dd>A standard format for sharing static-analysis and security scan results.</dd>
+      <dt>CI/CD</dt><dd>Automated workflows that build, test and deliver software.</dd>
+      <dt>CI Security Gate</dt><dd>A policy-based checkpoint that can fail a build when configured security thresholds are exceeded.</dd>
+      <dt>Severity</dt><dd>The seriousness of a security finding, commonly Critical, High, Medium or Low.</dd>
+      <dt>Evidence</dt><dd>Verifiable information supporting a security finding, such as an advisory or code indicator.</dd>
+      <dt>Impact path</dt><dd>The dependency chain through which a package reaches your application.</dd>
+      <dt>Remediation</dt><dd>A recommended action to reduce or resolve a security risk.</dd>
+      <dt>False positive</dt><dd>A reported issue that is not actually a security problem.</dd>
+      <dt>Evaluation / Benchmark</dt><dd>Testing the detection engine against a separate labelled dataset to measure detection performance and false alarms.</dd>
+      <dt>Known malware list</dt><dd>A collection of previously identified malicious packages; a package absent from the list is not necessarily safe.</dd>
+      <dt>Version diff</dt><dd>A comparison of security-relevant changes between two versions of a package.</dd>
+      <dt>Repository posture</dt><dd>Security-related observations about the repository and its configuration. (Not yet enabled in scans; the report shows this check as skipped.)</dd>
+    </dl>
+  </section>
+
+  <section id="g-report">
+    <h3>Understanding your scan report</h3>
+    <ul class="guide-list">
+      <li><b>Verdict and “look at these first”.</b> The banner states the CI gate result and lists the findings to handle first, ordered by scanner facts only.</li>
+      <li><b>Findings by type.</b> Four separate counts that are never merged into one score: <i>known vulnerabilities</i> (advisories), <i>known malicious packages</i> (OSV MAL- records), <i>suspicious behaviour</i> (heuristic signals from TRACII rules and GuardDog) and <i>repository posture</i>.</li>
+      <li><b>Severity.</b> Critical and High deserve attention first; Medium and Low are real but less urgent; Info is context only (for example “has an install script”).</li>
+      <li><b>Dependency graph.</b> Each dot is a package and each line means “depends on”. Colour shows what the scanners found (yellow = known malware, purple = suspicious behaviour, red/amber/blue = vulnerability severity) and size shows how many packages depend on it. Click a dot to highlight its path up to your app.</li>
+      <li><b>Evidence.</b> Every finding lists its evidence (advisory text, code location, metadata) with a link to the source: OSV.dev, GitHub advisories, the npm registry or the rule that fired.</li>
+      <li><b>AI investigation.</b> Meta Muse models explain the scanner's evidence. Every claim must cite an evidence ID or it is discarded, and the AI never changes the scanner's verdict.</li>
+      <li><b>Remediation and rescanning.</b> “Propose fix” shows the exact package.json change; “Simulate fix and rescan” checks in a sandbox whether the finding disappears. A finding counts as fixed only after that rescan.</li>
+      <li><b>CI Gate PASS / FAIL.</b> The build is blocked when a finding is at or above the chosen threshold (default: High), or marked <i>incomplete</i> when a required check could not run.</li>
+      <li><b>Exports.</b> SBOM (CycloneDX) lists every component; SARIF loads into GitHub code scanning; the gate report and PDF report summarise the scan.</li>
+    </ul>
+  </section>
+
+  <section id="g-limits">
+    <h3>Important limitations</h3>
+    <ul class="guide-list limits">
+      <li>No detected issue does not guarantee that an application is completely secure.</li>
+      <li>Suspicious behaviour indicators are not automatically confirmed malware.</li>
+      <li>An advisory match does not necessarily prove that vulnerable code is reachable or exploited.</li>
+      <li>AI assessments explain scanner evidence; they never override the deterministic scanner verdict.</li>
+      <li>Offline benchmark evaluation results are separate from your live scan results.</li>
+      <li>A skipped or unexecuted check is never presented as a successful check; the report lists it as not run.</li>
+    </ul>
+  </section>
+</dialog>
 <dialog id="models-dialog"><div id="models-body"></div><form method="dialog" class="dialog-actions"><button class="ghost">Close</button></form></dialog>
 <footer>Results say what these checks detected. “No issue detected” is not a guarantee that a package is safe. AI assessments are labelled and never change the scanner verdict.</footer>
 </body>

@@ -67,7 +67,7 @@ cd backend
 ../.venv/bin/python -m tracii sbom --dir ../my-app -o sbom.cdx.json      # SBOM only: offline, no scan
 ```
 
-In the web UI, every finished scan has **Export: SARIF · SBOM** links (`GET /api/scans/{id}/sarif`, `/sbom`, `/gate`).
+In the web UI, every finished scan has **Export: SBOM · SARIF · CI gate report · PDF report** (`GET /api/scans/{id}/report.pdf?fail_on=high`: a paginated assessment built from that scan's stored result with ReportLab; AI sections appear only for AI calls that succeeded on that scan) and links (`GET /api/scans/{id}/sarif`, `/sbom`, `/gate`).
 The SBOM lists one component per name@version, with a purl, the SHA-512 from the lockfile, its scope (devDependencies
 are `excluded`) and the resolved dependency graph. Only OSV advisories go into its `vulnerabilities`; malicious-behaviour
 signals are detector output, not advisories, so they stay out of it.
@@ -141,7 +141,7 @@ backend/tracii/
                Scorecard as citable evidence), ssvc_cisa.csv (official CISA table, pinned)
   replay/      scenarios.json (4 sourced incidents) + replay logic on the user's graph
   fix/         remediation.py (proposal → --package-lock-only --ignore-scripts → compare)
-  export/      sarif.py (SARIF 2.1.0 for code scanning), sbom.py (CycloneDX 1.5 JSON)
+  export/      sarif.py (SARIF 2.1.0 for code scanning), sbom.py (CycloneDX 1.5 JSON), pdf_report.py (PDF assessment)
   eval/        dataset.py (labelled-dataset loader: npm tarballs + encrypted DataDog zips, read in memory)
   gate.py      CI pass/fail policy (enforce | observe, severity threshold, incomplete-scan rule) + markdown report
   cli.py       `python -m tracii scan | sbom` (used by action.yml)

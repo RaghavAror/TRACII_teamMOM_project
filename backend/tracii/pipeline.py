@@ -37,6 +37,8 @@ class ScanRecord:
     lockfile: bytes = b""
     package_files: dict[str, npm_registry.PackageFiles] = field(default_factory=dict)  # "name@ver" -> files
     deep_limit: int = DEEP_SCAN_LIMIT
+    # AI results the user actually requested for this scan (finding id -> latest result); used by the PDF report.
+    ai_notes: dict[str, dict] = field(default_factory=dict)
 
 
 class Store:

@@ -26,6 +26,7 @@ from tracii.diff.version_diff import diff_packages
 from tracii.evidence.schema import RemediationStatus, ScanSource
 from tracii.evidence.slicing import slices_for_finding
 from tracii.export.sarif import to_sarif
+from tracii.export.pdf_report import build_pdf
 from tracii.export.sbom import to_cyclonedx
 from tracii.fix import remediation
 from tracii.impact.paths import DependencyGraph
@@ -239,6 +240,19 @@ def get_gate(scan_id: str, fail_on: Literal["critical", "high", "medium", "low",
             "markdown": gate.markdown_summary(result, verdict)}
 
 
+@app.get("/api/scans/{scan_id}/report.pdf")
+def get_pdf_report(scan_id: str, fail_on: Literal["critical", "high", "medium", "low", "none"] = "high",
+                   fail_on_unknown: bool = False, ignore_dev: bool = False) -> Response:
+    """PDF assessment built from this scan's stored result (and only AI calls that succeeded for it)."""
+    rec = _record(scan_id)
+    verdict = gate.evaluate(rec.result, gate.GatePolicy(fail_on=fail_on, fail_on_unknown=fail_on_unknown,
+                                                        include_dev=not ignore_dev))
+    pdf = build_pdf(rec.result, verdict, rec.ai_notes)
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="tracii-report-{scan_id}.pdf"',
+                             "Cache-Control": "no-store"})
+
+
 class ExplainRequest(BaseModel):
     deep: bool = False
     independent: bool = False
@@ -254,6 +268,8 @@ def explain(scan_id: str, finding_id: str, body: ExplainRequest) -> dict:
     if body.independent:
         result["independent_assessments"] = investigator.independent_assessments(
             f, slices, result, timeout=float(os.environ.get("INDEPENDENT_TIMEOUT", "45")))
+    if result.get("ai_status") == "ok":
+        rec.ai_notes.setdefault(finding_id, {})["explain"] = result
     return result
 
 
@@ -269,8 +285,11 @@ def investigate_agents(scan_id: str, finding_id: str, body: AgentsRequest) -> di
     f = _finding(rec, finding_id)
     pf = rec.package_files.get(f"{f.package}@{f.version}")
     slices = slices_for_finding(f, pf.files) if pf else []
-    return agents.investigate(f, slices, models.meta_client(), mission_impact=body.mission_impact,
-                              independent=body.independent, defer_reviews=True)
+    out = agents.investigate(f, slices, models.meta_client(), mission_impact=body.mission_impact,
+                             independent=body.independent, defer_reviews=True)
+    if (out.get("judge") or {}).get("ai_status") == "ok":
+        rec.ai_notes.setdefault(finding_id, {})["agents"] = out
+    return out
 
 
 @app.get("/api/reviews/{review_id}")

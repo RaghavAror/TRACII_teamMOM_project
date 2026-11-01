@@ -218,3 +218,31 @@ dl.facts dt { color: var(--muted); } dl.facts dd { margin: 0; }
 code.cmd { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; overflow-x: auto; max-width: 100%; }
 #gate-form select { padding: 4px 8px; }
 #gate-form input { flex: none; }
+
+/* guidebook */
+.guide-link { background: none; border: none; color: var(--accent); padding: 2px 0 0; font-size: 13px; font-weight: 500; }
+.guide-link:hover { text-decoration: underline; filter: none; }
+.btn.primary-btn { background: var(--grad); color: #fff; border-color: transparent; }
+.btn.primary-btn:hover { color: #fff; filter: brightness(1.08); }
+dialog.guide { max-width: 860px; max-height: calc(100vh - 48px); overflow-y: auto; padding: 0 26px 26px; scroll-behavior: smooth; }
+.guide-head { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 18px 0 10px; background: var(--card); }
+.guide-head h2 { margin: 0; font-size: 22px; } .guide-head .eyebrow { margin: 0 0 2px; }
+.guide-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.guide-toc a { font-size: 12.5px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; color: var(--muted); }
+.guide-toc a:hover { color: var(--accent); border-color: var(--accent); }
+dialog.guide section { padding-top: 14px; scroll-margin-top: 70px; }
+dialog.guide h3 { font-size: 15px; margin-bottom: 8px; }
+dialog.guide p { margin: 0 0 8px; }
+.flow { list-style: none; counter-reset: step; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; padding: 0; margin: 0; }
+.flow li { counter-increment: step; position: relative; padding: 34px 10px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); font-size: 12.5px; }
+.flow li::before { content: counter(step); position: absolute; top: 9px; left: 10px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--grad); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+.flow li b { display: block; font-size: 13.5px; margin-bottom: 3px; } .flow li span { color: var(--muted); }
+@media (max-width: 760px) { .flow { grid-template-columns: minmax(0, 1fr); } }
+dl.terms { display: grid; grid-template-columns: minmax(150px, max-content) 1fr; gap: 0; margin: 0; font-size: 13px; }
+dl.terms dt, dl.terms dd { margin: 0; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+dl.terms dt { font-weight: 600; } dl.terms dd { color: var(--muted); }
+@media (max-width: 560px) { dl.terms { grid-template-columns: minmax(0, 1fr); } dl.terms dt { border-bottom: none; padding-bottom: 0; } }
+.guide-list { padding-left: 18px; margin: 0; font-size: 13px; } .guide-list li { margin: 5px 0; }
+.guide-list.limits li::marker { color: var(--med); }

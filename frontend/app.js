@@ -128,7 +128,8 @@ function render() {
   $("#exports").replaceChildren(h("span", { class: "muted" }, "Export"),
     h("a", { class: "btn", href: `${base}/sbom`, download: `tracii-${r.scan_id}.cdx.json`, title: "CycloneDX 1.5 JSON: every name@version with purl, hash, scope and the OSV advisories" }, "SBOM · CycloneDX"),
     h("a", { class: "btn", href: `${base}/sarif`, download: `tracii-${r.scan_id}.sarif`, title: "SARIF 2.1.0 for GitHub code scanning; each result points at package-lock.json" }, "SARIF"),
-    h("button", { class: "btn", type: "button", onclick: downloadGateReport, title: "Markdown report from the CI gate policy (fail on high)" }, "CI gate report"));
+    h("button", { class: "btn", type: "button", onclick: downloadGateReport, title: "Markdown report from the CI gate policy (fail on high)" }, "CI gate report"),
+    h("button", { class: "btn primary-btn", type: "button", onclick: (e) => downloadPdf(e.currentTarget), title: "PDF assessment built from this scan's results, at the CI gate threshold selected below" }, "Download PDF report"));
   $("#checks").replaceChildren(...r.checks.map((c) =>
     h("li", { class: `check ${c.status}` }, h("b", {}, c.name), ` ${c.status}`, c.packages_checked ? ` · ${c.packages_checked} pkgs` : "", h("div", { class: "muted" }, c.detail))));
   $("#warnings").replaceChildren(...r.inventory.warnings.map((w) => h("div", { class: "warn" }, "⚠ " + w)));
@@ -424,6 +425,22 @@ async function renderVerdict() {
 }
 const stat = (n, label, cls) => h("div", { class: `v-stat ${cls}` }, h("b", {}, n), h("span", {}, label));
 
+// Built at click time from the scan on screen and the gate threshold currently selected, so it can never be stale.
+async function downloadPdf(btn) {
+  const id = scan.scan_id;
+  const form = new FormData($("#gate-form"));
+  const q = new URLSearchParams({ fail_on: form.get("fail_on") || "high", ignore_dev: !!form.get("ignore_dev"), fail_on_unknown: !!form.get("fail_on_unknown") });
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Building PDF…";
+  try {
+    const res = await fetch(`${window.TRACII_API}/api/scans/${encodeURIComponent(id)}/report.pdf?${q}`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+    const a = h("a", { href: URL.createObjectURL(await res.blob()), download: `tracii-report-${id}.pdf` });
+    document.body.append(a); a.click(); a.remove();
+  } catch (err) { alert(`PDF report failed: ${err.message}`); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+
 async function downloadGateReport() {
   try {
     const g = await api(`/api/scans/${encodeURIComponent(scan.scan_id)}/gate`);
@@ -549,3 +566,15 @@ function updateDot(rows) {
 api("/api/models/status").then(updateDot).catch(() => {});
 
 $("#models-btn").addEventListener("click", () => { showModels(); $("#models-dialog").showModal(); });
+
+// ---------- guidebook ----------
+document.querySelectorAll(".open-guide").forEach((el) => el.addEventListener("click", (e) => {
+  e.preventDefault();
+  $("#guide-dialog").showModal();
+  $("#guide-dialog").scrollTop = 0;
+}));
+document.querySelectorAll(".guide-toc a").forEach((a) => a.addEventListener("click", (e) => {
+  e.preventDefault();
+  $(a.getAttribute("href")).scrollIntoView({ behavior: "smooth", block: "start" });
+}));
+$("#guide-dialog").addEventListener("click", (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });   // click on backdrop
