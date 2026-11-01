@@ -109,6 +109,7 @@ class PackageNode(BaseModel):
     has_install_script: bool = False
     resolved: str | None = None
     integrity: str | None = None
+    license: str | None = None    # declared license from the lockfile (v2/v3); None if not recorded
     dependencies: dict[str, str] = Field(default_factory=dict)  # name -> lockfile path it resolves to
 
 

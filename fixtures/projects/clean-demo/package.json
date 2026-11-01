@@ -1,0 +1,11 @@
+{
+  "name": "tracii-clean-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Small project with no known advisories when added (2026-11-01). Used to check that TRACII reports nothing it cannot back with evidence. A later advisory would show up honestly.",
+  "dependencies": {
+    "ms": "2.1.3",
+    "picocolors": "1.1.1",
+    "semver": "7.7.1"
+  }
+}

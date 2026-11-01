@@ -3,7 +3,8 @@
 // many packages in this project depend on it (blast radius inside the project).
 import { $, h, api, post, attackUrl } from "./ui.js";
 
-const LIB = "https://cdn.jsdelivr.net/npm/3d-force-graph@1.80.1/dist/3d-force-graph.min.js";
+// Same pinned build twice: the bundled copy (vendor/, MIT) so a demo never depends on the CDN, then jsDelivr.
+const LIBS = ["vendor/3d-force-graph.min.js", "https://cdn.jsdelivr.net/npm/3d-force-graph@1.80.1/dist/3d-force-graph.min.js"];
 const SEV = ["critical", "high", "medium", "low", "info", "unknown"];
 const STAGE_MS = 1900;
 const WAVE_MS = 650;
@@ -12,13 +13,14 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 let libPromise = null;
 function loadLib() {
-  libPromise ??= new Promise((resolve, reject) => {
+  const load = (src) => new Promise((resolve, reject) => {
     const s = document.createElement("script");
-    s.src = LIB;
+    s.src = src;
     s.onload = () => (window.ForceGraph3D ? resolve(window.ForceGraph3D) : reject(new Error("3D library did not load")));
-    s.onerror = () => reject(new Error("could not load the 3D library from cdn.jsdelivr.net"));
+    s.onerror = () => reject(new Error(`could not load the 3D library from ${src}`));
     document.head.append(s);
   });
+  libPromise ??= load(LIBS[0]).catch(() => load(LIBS[1]));
   return libPromise;
 }
 
@@ -44,12 +46,13 @@ function nodeColor(n) {
   if (n.ghost || G.targets.has(n.id)) return css(n.ghost ? "--g-ghost" : "--g-target");
   if (G.wave.has(n.id)) return css("--g-wave");
   if (G.hlNodes.size && !G.hlNodes.has(n.id)) return css("--g-dim");
-  if (n.app) return css("--accent");
+  if (n.app) return css("--g-app");
+  if ((n.findings?.malicious_indicator || []).some((f) => /^MAL-/.test(f.rule))) return css("--g-known");   // OSV known malware
   if (significant(n.findings?.malicious_indicator).length) return css("--g-mal");
   if (n.findings?.known_vulnerability) return css({ critical: "--crit", high: "--high", medium: "--med", low: "--low" }[worst(n.findings.known_vulnerability)] || "--info");
   return css(n.dev_only ? "--g-dev" : "--g-clean");
 }
-const nodeVal = (n) => (n.app ? 14 : n.ghost ? 8 : 1 + Math.min(n.dependents || 0, 30) / 3 + (Object.values(n.findings || {}).some((l) => significant(l).length) ? 3 : 0) + (G.targets.has(n.id) ? 6 : 0));
+const nodeVal = (n) => (n.app ? 14 : n.ghost ? 8 : 1 + Math.min(n.dependents || 0, 30) / 3 + (Object.values(n.findings || {}).some((l) => significant(l).length) ? 3 : 0) + ((n.findings?.malicious_indicator || []).some((f) => /^MAL-/.test(f.rule)) ? 10 : 0) + (G.targets.has(n.id) ? 6 : 0));
 const linkOn = (l) => G.hlLinks.has(linkKey(l));
 function nodeLabel(n) {
   if (n.app) return "your app";
@@ -101,6 +104,7 @@ function showNodeInfo(n) {
 }
 
 function focus(n) {
+  G.userFocused = true;   // the one-time auto zoom-to-fit must not undo a focus made while the layout settles
   highlightAncestors(n.id);
   showNodeInfo(n);
   const d = 90 / Math.hypot(n.x || 1, n.y || 1, n.z || 1);
@@ -139,10 +143,11 @@ export async function initGraph(scan, { onOpenFinding }) {
       .cooldownTicks(120)
       .graphData(visibleData());
     let fitted = false;
-    G.fg.onEngineStop(() => { if (!fitted) { fitted = true; G.fg.zoomToFit(600, 30); } });
+    G.userFocused = false;
+    G.fg.onEngineStop(() => { if (!fitted) { fitted = true; if (!G.userFocused) G.fg.zoomToFit(600, 30); } });
     refresh();
     new ResizeObserver(() => G.fg?.width(el.clientWidth)).observe(el);
-    $("#graph-stats").textContent = `${raw.nodes.length - 1} packages · ${raw.edges.length} edges` + (G.flaggedOnly ? " · large graph: showing paths to findings only" : "");
+    $("#graph-stats").textContent = `${raw.nodes.length - 1} packages · ${raw.edges.length} edges` + (G.flaggedOnly ? ` · large graph: showing ${G.fg.graphData().nodes.length - 1} on paths to findings` : "");
   } catch (err) {
     el.replaceChildren(h("p", { class: "error pad" }, `3D view unavailable: ${err.message}. The findings table and impact paths below still work.`));
   }

@@ -221,12 +221,21 @@ def get_sbom(scan_id: str, vulnerabilities: bool = True) -> Response:
 
 @app.get("/api/scans/{scan_id}/gate")
 def get_gate(scan_id: str, fail_on: Literal["critical", "high", "medium", "low", "none"] = "high",
-             fail_on_unknown: bool = False, ignore_dev: bool = False) -> dict:
+             fail_on_unknown: bool = False, ignore_dev: bool = False,
+             mode: Literal["enforce", "observe"] = "enforce") -> dict:
+    """The same policy code as `tracii scan` / action.yml, applied to this scan's findings."""
     result = _record(scan_id).result
-    verdict = gate.evaluate(result, gate.GatePolicy(fail_on=fail_on, fail_on_unknown=fail_on_unknown,
-                                                    include_dev=not ignore_dev))
-    return {"outcome": verdict.outcome, "blocking": [f.id for f in verdict.blocking],
+    policy = gate.GatePolicy(fail_on=fail_on, fail_on_unknown=fail_on_unknown, include_dev=not ignore_dev, mode=mode)
+    verdict = gate.evaluate(result, policy)
+    gated = [f for f in result.findings if f.category.value in policy.categories]
+    return {"outcome": verdict.outcome, "exit_code": verdict.exit_code, "would_fail": verdict.would_fail,
+            "blocking": [f.id for f in verdict.blocking],
+            "non_blocking": len(gated) - len(verdict.blocking) - verdict.ignored_dev,
+            "ignored_dev": verdict.ignored_dev, "not_gated_categories": sorted(
+                {f.category.value for f in result.findings} - set(policy.categories)),
             "unknown_severity": [f.id for f in verdict.unknown], "failed_checks": verdict.failed_checks,
+            "policy": {"fail_on": fail_on, "mode": mode, "fail_on_unknown": fail_on_unknown, "ignore_dev": ignore_dev,
+                       "categories": list(policy.categories)},
             "markdown": gate.markdown_summary(result, verdict)}
 
 
@@ -243,7 +252,8 @@ def explain(scan_id: str, finding_id: str, body: ExplainRequest) -> dict:
     slices = slices_for_finding(f, pf.files) if pf else []
     result = investigator.explain(f, slices, models.meta_client(), deep=body.deep)
     if body.independent:
-        result["independent_assessments"] = investigator.independent_assessments(f, slices, result)
+        result["independent_assessments"] = investigator.independent_assessments(
+            f, slices, result, timeout=float(os.environ.get("INDEPENDENT_TIMEOUT", "45")))
     return result
 
 
@@ -270,6 +280,16 @@ def get_reviews(review_id: str) -> dict:
     if out is None:
         raise HTTPException(404, "review not found (the server may have restarted)")
     return out
+
+
+# ---------- fixed benchmark (not computed from any scan) ----------
+
+_BENCHMARK = Path(__file__).resolve().parents[1] / "eval" / "benchmark.json"
+
+
+@app.get("/api/benchmark")
+def benchmark() -> dict:
+    return json.loads(_BENCHMARK.read_text())
 
 
 # ---------- attack replays ----------

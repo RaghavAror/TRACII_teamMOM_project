@@ -100,6 +100,7 @@ def build_inventory(package_json: bytes | str, lockfile: bytes | str) -> Invento
                 "dev": bool(meta.get("dev") or meta.get("devOptional")),
                 "optional": bool(meta.get("optional")),
                 "has_install_script": bool(meta.get("hasInstallScript")),
+                "license": meta["license"] if isinstance(meta.get("license"), str) else None,
                 "dependencies": deps,
             }
     elif isinstance(lock.get("dependencies"), dict):
@@ -129,6 +130,7 @@ def build_inventory(package_json: bytes | str, lockfile: bytes | str) -> Invento
                 has_install_script=meta.get("has_install_script", False),
                 resolved=meta.get("resolved"),
                 integrity=meta.get("integrity"),
+                license=meta.get("license"),
                 dependencies=resolved_deps,
             )
         )

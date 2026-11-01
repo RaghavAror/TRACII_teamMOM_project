@@ -56,6 +56,10 @@ def _component(nodes: list[PackageNode]) -> dict:
                   "scope": "excluded" if dev else ("optional" if all(x.optional for x in nodes) else "required")}
     if group:
         comp["group"] = group
+    if lic := next((x.license for x in nodes if x.license), None):
+        # declared license text as recorded in the lockfile; an expression only when it looks like one
+        comp["licenses"] = ([{"expression": lic}] if any(op in lic for op in (" OR ", " AND ", " WITH "))
+                            else [{"license": {"name": lic}}])
     if hashes := sri_hashes(next((x.integrity for x in nodes if x.integrity), None)):
         comp["hashes"] = hashes
     if resolved := next((x.resolved for x in nodes if x.resolved), None):

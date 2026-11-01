@@ -89,6 +89,8 @@ medium or higher.
 On fresh set 2: 0/40 false alarms on popular packages, 0/20 on older (2023–24) releases of popular packages, 0/18 on
 packages with install scripts. The OSV list itself raised no false alarms on any benign package.
 
+The web UI's Evaluation card reads these figures from `backend/tracii/eval/benchmark.json` (a test checks they match this table) and computes the 95% intervals from the counts.
+
 **How to read it**
 - **New malware:** the code rules (about 60%) are the relevant number. **Known malware:** the OSV list adds most
   of the rest. It only knows what has already been reported, and these samples were all reported, which flatters it.
@@ -144,8 +146,8 @@ backend/tracii/
   gate.py      CI pass/fail policy (enforce | observe, severity threshold, incomplete-scan rule) + markdown report
   cli.py       `python -m tracii scan | sbom` (used by action.yml)
   api/main.py  FastAPI routes (+ serves frontend/ in dev)
-frontend/      static UI (no build step): app.js, graph3d.js (3d-force-graph from CDN + replays), agents-view.js
-fixtures/      demo project (real lockfile) + INERT malicious-like test packages
+frontend/      static UI (no build step): app.js, graph3d.js (bundled 3d-force-graph + replays), agents-view.js
+fixtures/      demo projects (vulnerable-demo, clean-demo; real lockfiles) + INERT malicious-like test packages
 docs/          ARCHITECTURE.md · PLAN.md · MODELS.md · CHAINVIZ_AUDIT.md · MUSE_CODE_LOG.md
 ```
 
@@ -176,7 +178,7 @@ fix simulation refuses URL / git / `file:` / `link:` specs, workspaces and lockf
 ## Credits
 Started from an audit of [drPod/chainviz](https://github.com/drPod/chainviz) (MIT). See `docs/CHAINVIZ_AUDIT.md`
 for what was kept. Uses [OSV-Scanner](https://github.com/google/osv-scanner) and [GuardDog](https://github.com/DataDog/guarddog) (both Apache-2.0).
-3D view: [3d-force-graph](https://github.com/vasturiano/3d-force-graph) (MIT), loaded from jsDelivr, not vendored.
+3D view: [3d-force-graph](https://github.com/vasturiano/3d-force-graph) 1.80.1 (MIT), bundled in `frontend/vendor/` (licence alongside) so the demo does not depend on a CDN; jsDelivr is the fallback.
 SSVC decision table from [CERTCC/SSVC](https://github.com/CERTCC/SSVC) (`backend/tracii/ai/ssvc_cisa.csv` records the commit).
 Evaluation data: malicious samples from [DataDog/malicious-software-packages-dataset](https://github.com/DataDog/malicious-software-packages-dataset)
 (Apache-2.0), labels started from the chainviz-v2 dataset; benign packages keep their own licences.

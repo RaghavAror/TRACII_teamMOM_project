@@ -1,6 +1,15 @@
 // Shared DOM + API helpers. All package-derived text is untrusted and is
 // rendered with textContent only (never innerHTML).
 export const API = window.TRACII_API;
+
+// Views pass optional sections as `cond ? node : null`, as with h(). Native replaceChildren/append would
+// render those as the text "null"; skip empty kids the same way h() does.
+for (const method of ["replaceChildren", "append"]) {
+  const native = Element.prototype[method];
+  Element.prototype[method] = function (...kids) {
+    return native.apply(this, kids.flat(Infinity).filter((k) => k !== null && k !== undefined && k !== false));
+  };
+}
 export const $ = (s, r = document) => r.querySelector(s);
 
 export function h(tag, attrs = {}, ...kids) {

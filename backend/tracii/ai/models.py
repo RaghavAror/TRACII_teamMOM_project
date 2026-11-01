@@ -86,6 +86,16 @@ def _live_state(model: str | None, enabled: bool) -> tuple[str, str | None]:
     return ("verified", None) if ok_at else ("configured", None)
 
 
+# model id -> latency (s) of its probe in the most recent live_check(); real calls, never estimated
+LAST_LATENCY: dict[str, float] = {}
+
+
+def _timing(model: str | None) -> dict:
+    failed = FAILED.get(model or "")
+    return {"last_ok_at": VERIFIED.get(model or ""), "last_failed_at": failed[0] if failed else None,
+            "check_latency_s": LAST_LATENCY.get(model or "")}
+
+
 def status() -> list[dict]:
     has_key = bool(os.environ.get("META_API_KEY"))
     rows = []
@@ -93,7 +103,7 @@ def status() -> list[dict]:
         flag_off = r.flag is not None and os.environ.get(r.flag) != "1"
         st, err = _live_state(r.model_id, has_key and not flag_off)
         rows.append({"role": r.key, "model": r.model_id, "feature": r.feature, "endpoint": r.endpoint,
-                     "optional": r.optional, "status": st, "error": err,
+                     "optional": r.optional, "status": st, "error": err, **_timing(r.model_id),
                      "note": f"off: set {r.flag}=1 to enable" if flag_off else None})
     for key, label in (("GLIMMER", "Muse Glimmer"), ("SPARK_OPEN", "Muse Spark Open")):
         model = os.environ.get(f"{key}_MODEL")
@@ -101,7 +111,7 @@ def status() -> list[dict]:
         rows.append({"role": f"independent_{key.lower()}", "model": model or f"({label}: no endpoint)",
                      "feature": f"{label}: independent second assessment of the same evidence",
                      "endpoint": "OpenAI-compatible /v1/chat/completions (self-hosted or hosted)",
-                     "optional": True, "status": st, "error": err})
+                     "optional": True, "status": st, "error": err, **_timing(model)})
     rows.append({"role": "dev_agent", "model": "Muse Code", "feature": "Development-time coding/review agent",
                  "endpoint": "n/a (used by the team, not by the running app)", "optional": False,
                  "status": "see docs/MUSE_CODE_LOG.md"})
@@ -158,7 +168,10 @@ def live_check(open_weight_timeout: float = 25) -> list[dict]:
                     "error": str(exc)[:200]}
 
     with ThreadPoolExecutor(max_workers=6) as pool:
-        return list(pool.map(run, jobs.items()))
+        results = list(pool.map(run, jobs.items()))
+    for r in results:
+        LAST_LATENCY[r["model"]] = r["latency_s"]
+    return results
 
 
 SAM_BOX = re.compile(r"<\|box;x1=(\d+);y1=(\d+);x2=(\d+);y2=(\d+);w=(\d+);h=(\d+)(?:;c=([\d.]+))?\|>")

@@ -17,6 +17,37 @@ const TYPE_LABEL = (f) => f.category === "known_vulnerability" ? "Known vulnerab
   : isKnownMalware(f) ? "Known malicious package (OSV MAL- record)"
   : f.category === "malicious_indicator" ? "Suspicious behaviour (heuristic indicator, not confirmed malware)"
   : CAT_LABEL[f.category];
+const SOURCE_LABEL = { "osv-api": "OSV.dev API", "osv-scanner": "OSV-Scanner", guarddog: "GuardDog (DataDog)", "tracii-static": "TRACII behaviour rules" };
+const srcLabel = (s) => SOURCE_LABEL[s] || s;
+const isDevOnly = (f) => f.paths.length > 0 && f.paths.every((p) => p.dev_only);
+const isDirect = (f) => f.paths.some((p) => p.nodes.length === 2);
+
+// Deterministic triage order from scanner facts only (no invented exploitability):
+// known malware > severity > ships to production > direct dependency > a fixed version exists.
+function priority(f) {
+  return [isKnownMalware(f) ? 0 : 1, SEV_ORDER.indexOf(f.severity), isDevOnly(f) ? 1 : 0, isDirect(f) ? 0 : 1,
+    f.fixed_versions.length ? 0 : 1];
+}
+const byPriority = (a, b) => { const x = priority(a), y = priority(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
+function whyFirst(f) {
+  return [isKnownMalware(f) ? "known malware" : f.severity, isDevOnly(f) ? "dev only" : "ships to production",
+    isDirect(f) ? "direct" : "transitive", f.category === "known_vulnerability" ? (f.fixed_versions.length ? `fix: ${f.fixed_versions[0]}` : "no fix published") : null].filter(Boolean);
+}
+
+function recommendedAction(f) {
+  const via = [...new Set(f.paths.map((p) => p.direct_dependency))].join(", ");
+  if (isKnownMalware(f)) return "Remove this version from the dependency tree" + (via ? ` (it arrives via ${via})` : "") +
+    ". Only replace it with a version outside the affected range in the OSV record, and treat secrets on machines that installed it as exposed.";
+  if (f.category === "known_vulnerability") {
+    if (!f.fixed_versions.length) return "No fixed version is published. Check whether your app uses the affected functionality, consider replacing the package, and watch the advisory.";
+    return isDirect(f) ? `Upgrade ${f.package} to ${f.fixed_versions.join(" or ")} in package.json. "Propose fix" below builds the change and verifies it by rescanning.`
+      : `Upgrade the parent (${via || "unknown"}) to a release that depends on ${f.package} ≥ ${f.fixed_versions[0]}, or add an npm override. "Propose fix" builds the override and verifies it by rescanning.`;
+  }
+  if (f.category === "malicious_indicator") return f.severity === "info" ? "Context only (e.g. an install script or a capability). No action unless other findings point at this package."
+    : "Review the cited code before trusting this version. Compare it with the previous release in the version diff below; pin to a version without the behaviour if it is unexplained.";
+  return "Review the cited evidence.";
+}
+
 let scan = null;
 let activeCat = "known_vulnerability";
 
@@ -30,7 +61,8 @@ document.querySelectorAll("[data-example]").forEach((b) => b.addEventListener("c
   $("#form-github [name=url]").value = b.dataset.example;
 }));
 
-api("/api/fixtures").then((names) => names.forEach((n) => $("#fixture-select").append(h("option", { value: n }, n)))).catch(() => {});
+api("/api/fixtures").then((names) => names.forEach((n) => $("#fixture-select").append(
+  h("option", { value: n, selected: n === "vulnerable-demo" }, n)))).catch(() => {});
 
 $("#form-github").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -91,7 +123,7 @@ function render() {
   $("#results").classList.remove("hidden");
   const src = r.source;
   $("#source-line").textContent = `${src.kind}: ${src.label}` + (src.commit_sha ? ` @ ${src.ref} (${src.commit_sha})` : "") +
-    ` · ${r.inventory.packages.length} packages · lockfile v${r.inventory.lockfile_version}`;
+    ` · ${r.inventory.packages.length} packages · lockfile v${r.inventory.lockfile_version} · scanned ${new Date(r.created_at).toLocaleString()} · scan ${r.scan_id}`;
   const base = `${window.TRACII_API}/api/scans/${encodeURIComponent(r.scan_id)}`;
   $("#exports").replaceChildren(h("span", { class: "muted" }, "Export"),
     h("a", { class: "btn", href: `${base}/sbom`, download: `tracii-${r.scan_id}.cdx.json`, title: "CycloneDX 1.5 JSON: every name@version with purl, hash, scope and the OSV advisories" }, "SBOM · CycloneDX"),
@@ -100,6 +132,7 @@ function render() {
   $("#checks").replaceChildren(...r.checks.map((c) =>
     h("li", { class: `check ${c.status}` }, h("b", {}, c.name), ` ${c.status}`, c.packages_checked ? ` · ${c.packages_checked} pkgs` : "", h("div", { class: "muted" }, c.detail))));
   $("#warnings").replaceChildren(...r.inventory.warnings.map((w) => h("div", { class: "warn" }, "⚠ " + w)));
+  renderLicenses(r.inventory);
 
   const groups = [
     ["Known malicious packages", "OSV MAL- records: reported malware. Remove.", "malicious_indicator", (f) => isKnownMalware(f), "mal"],
@@ -127,16 +160,22 @@ function renderTable() {
   const q = $("#filter").value.trim().toLowerCase();
   const rows = scan.result.findings
     .filter((f) => f.category === activeCat && (!q || f.package.includes(q)))
-    .sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
+    .sort(byPriority);
   $("#findings tbody").replaceChildren(...(rows.length ? rows.map((f) => h("tr", { onclick: () => showDetail(f) },
     h("td", {}, h("span", { class: `sev ${f.severity}` }, f.severity)),
     h("td", { class: "mono" }, `${f.package}@${f.version}`, isKnownMalware(f) ? h("span", { class: "tag malware" }, "known malware") : null),
     h("td", { class: "mono" }, f.rule_or_advisory),
-    h("td", {}, f.source),
+    h("td", {}, srcLabel(f.source)),
     h("td", { class: "muted" }, f.paths[0] ? (f.paths[0].dev_only ? "dev · " : "") + f.paths[0].direct_dependency : "—"),
   )) : [h("tr", {}, h("td", { colspan: 5, class: "muted" }, "No findings in this category from the checks that ran."))]));
 }
 $("#filter").addEventListener("input", () => scan && renderTable());
+$("#graph-focus").addEventListener("click", (e) => {
+  const f = scan?.result.findings.filter((x) => x.severity !== "info").sort(byPriority)[0];
+  if (!f) { e.target.textContent = "No findings to focus"; return; }
+  if (!focusPackage(`${f.package}@${f.version}`)) e.target.textContent = "Not drawn in the 3D view";
+  else { activeCat = f.category; render(); showDetail(f); }   // stay on the graph; detail panel updates below
+});
 
 function evidenceList(f) {
   return h("ol", { class: "evidence" }, f.evidence.map((e) => h("li", { id: `ev-${e.id}` },
@@ -176,13 +215,16 @@ function showDetail(f) {
     h("div", { class: `type-banner ${isKnownMalware(f) ? "mal" : f.category === "malicious_indicator" ? "sus" : "vuln"}` }, TYPE_LABEL(f)),
     h("h3", {}, f.title),
     h("div", { class: "row" }, h("span", { class: `sev ${f.severity}` }, f.severity),
-      h("span", { class: "tag" }, `confidence: ${f.confidence}`), h("span", { class: "tag" }, `source: ${f.source}`),
+      h("span", { class: "tag", title: "high = exact advisory match on the exact installed version; medium = correlated behaviour with a code location; low = a single, often benign signal" }, `confidence: ${f.confidence}`),
+      h("span", { class: "tag" }, `source: ${srcLabel(f.source)}`),
       f.paths.length ? h("span", { class: "tag" }, direct ? "direct dependency" : "transitive dependency") : null,
       f.paths.length && f.paths.every((p) => p.dev_only) ? h("span", { class: "tag" }, "dev only") : null),
     h("p", { class: "mono" }, `${f.package}@${f.version} · ${f.rule_or_advisory}`, f.aliases.length ? ` (${f.aliases.join(", ")})` : ""),
-    f.category === "known_vulnerability"
-      ? h("p", {}, h("b", {}, "Fixed in: "), f.fixed_versions.length ? f.fixed_versions.join(", ") : h("span", { class: "warn" }, "no fixed version published"))
-      : isKnownMalware(f) ? h("p", { class: "error" }, h("b", {}, "Action: "), "remove this version from your dependency tree. Only replace it with a version outside the affected range in the OSV record above, and treat any secrets on machines that installed it as exposed.") : null,
+    h("dl", { class: "facts" },
+      h("dt", {}, "Installed"), h("dd", { class: "mono" }, `${f.package}@${f.version}`),
+      h("dt", {}, "Reaches your app"), h("dd", {}, f.paths.length ? `${isDirect(f) ? "directly" : "transitively"} via ${[...new Set(f.paths.map((p) => p.direct_dependency))].join(", ")}${isDevOnly(f) ? " (dev only: not shipped)" : ""}` : "path not recorded"),
+      f.category === "known_vulnerability" ? [h("dt", {}, "Fixed in"), h("dd", {}, f.fixed_versions.length ? f.fixed_versions.join(", ") : h("span", { class: "warn" }, "no fixed version published"))] : null),
+    h("div", { class: `action ${isKnownMalware(f) ? "mal" : ""}` }, h("b", {}, "Recommended action: "), recommendedAction(f)),
     h("h4", {}, "Evidence"), evidenceList(f),
     h("h4", {}, "Impact path"), pathView(f),
     h("button", { class: "ghost", onclick: (e) => { if (!focusPackage(`${f.package}@${f.version}`)) e.target.textContent = "Not drawn in the 3D view"; } }, "Show in 3D graph"),
@@ -223,7 +265,10 @@ async function explain(f, box, deep, independent) {
       r.slices?.length ? h("details", {}, h("summary", {}, `Code slices sent to the model (${r.slices.length})`),
         r.slices.map((s) => h("pre", { class: "snippet" }, `${s.file}:${s.start}-${s.end}\n${s.code}`))) : null,
       (r.independent_assessments || []).length ? h("div", {}, h("h4", {}, "Independent assessments"),
-        r.independent_assessments.map((a) => h("div", { class: "tag" }, `${a.assessor} (${a.model}): ${a.status === "ok" ? a.assessment + (a.agrees_with_primary ? " · agrees" : " · disagrees") : a.status}`)))
+        r.independent_assessments.map((a) => h("div", { class: "row" }, h("span", { class: "tag" }, `${a.assessor} · ${a.model}`),
+          a.status === "ok" ? [h("span", { class: "tag" }, a.assessment), h("span", { class: `tag ${a.agrees_with_primary ? "ok" : "unavailable"}` }, a.agrees_with_primary ? "agrees with primary" : "disagrees with primary")]
+          : h("span", { class: "tag unavailable", title: a.error || "" }, a.status === "timeout" ? "timed out" : "unavailable"),
+          a.status !== "ok" && a.error ? h("span", { class: "muted" }, a.error) : null)))
         : independent ? h("p", { class: "muted" }, "No open-weight assessor configured (GLIMMER_* / SPARK_OPEN_*).") : null,
     );
   } catch (err) { box.replaceChildren(h("p", { class: "error" }, err.message)); }
@@ -349,22 +394,33 @@ async function renderVerdict() {
   const vulns = r.findings.filter((f) => f.category === "known_vulnerability");
   const top = r.findings.filter((f) => f.severity !== "info").map((f) => f.severity).sort((a, b) => SEV_ORDER.indexOf(a) - SEV_ORDER.indexOf(b))[0] || "none";
   const direct = r.inventory.packages.filter((p) => p.direct).length;
-  let gateOut = null;
-  try { gateOut = await api(`/api/scans/${encodeURIComponent(r.scan_id)}/gate`); } catch { /* shown as unknown */ }
-  const outcome = gateOut?.outcome || "unknown";
+  const ran = r.checks.filter((c) => c.status === "ran").map((c) => c.name);
+  const notRan = r.checks.filter((c) => c.status !== "ran");
+  let g = null;
+  try { g = await api(`/api/scans/${encodeURIComponent(r.scan_id)}/gate`); } catch { /* shown as unknown */ }
+  const outcome = g?.outcome || "unknown";
   const level = mal.length ? "critical" : outcome === "fail" ? "fail" : outcome === "pass" ? "pass" : "warn";
   const headline = mal.length ? `${mal.length} known malicious package${mal.length > 1 ? "s" : ""} in your dependency tree`
-    : outcome === "fail" ? `${gateOut.blocking.length} blocking finding${gateOut.blocking.length === 1 ? "" : "s"} at severity high or above`
-    : outcome === "pass" ? "No blocking findings from these checks" : "Scan incomplete: some checks could not run";
+    : outcome === "fail" ? `${g.blocking.length} blocking finding${g.blocking.length === 1 ? "" : "s"} at severity high or above`
+    : outcome === "pass" ? "No blocking findings from the checks that ran" : outcome === "incomplete" ? "Scan incomplete: a required check did not run" : "Gate decision unavailable";
+  const first = r.findings.filter((f) => f.severity !== "info").sort(byPriority).slice(0, 3);
   box.className = `verdict card v-${level}`;
   box.replaceChildren(
-    h("div", { class: "v-main" },
-      h("div", { class: "v-kicker" }, `CI gate (fail on high): ${outcome.toUpperCase()}`),
-      h("div", { class: "v-head" }, headline),
-      h("div", { class: "muted" }, `${r.source.kind === "fixture" ? "Demo project" : r.source.kind}: ${r.source.label} · highest severity: ${top} · deterministic scanner verdict, no AI involved`)),
-    h("div", { class: "v-stats" },
-      stat(mal.length, "known malware", "mal"), stat(vulns.length, "vulnerabilities", "vuln"), stat(sus.length, "suspicious (medium+)", "sus"),
-      stat(r.inventory.packages.length, `packages · ${direct} direct`, "")));
+    h("div", { class: "v-top" },
+      h("div", { class: "v-main" },
+        h("div", { class: "v-kicker" }, `CI gate · fail on high · ${outcome.toUpperCase()}${g ? ` (exit ${g.exit_code})` : ""}`),
+        h("div", { class: "v-head" }, headline),
+        h("div", { class: "muted" }, `${r.source.kind === "fixture" ? "Demo project" : r.source.kind}: ${r.source.label} · highest severity: ${top} · `,
+          `checks ran: ${ran.join(", ") || "none"}`, notRan.length ? ` · not run: ${notRan.map((c) => c.name).join(", ")}` : "",
+          " · deterministic scanner verdict, no AI involved")),
+      h("div", { class: "v-stats" },
+        stat(mal.length, "known malware", "mal"), stat(vulns.length, "vulnerabilities", "vuln"), stat(sus.length, "suspicious (medium+)", "sus"),
+        stat(g ? g.blocking.length : "–", "blocking", ""), stat(r.inventory.packages.length, `packages · ${direct} direct`, ""))),
+    first.length ? h("div", { class: "v-first" }, h("div", { class: "v-kicker" }, "Look at these first"),
+      h("ol", {}, first.map((f) => h("li", {}, h("button", { class: "linklike", onclick: () => openFinding(f.id) }, `${f.package}@${f.version}`),
+        ` ${f.rule_or_advisory} `, whyFirst(f).map((w) => h("span", { class: "tag" }, w))))),
+      h("div", { class: "muted" }, "Ordered by scanner facts only: known malware, severity, production path, direct dependency, fix available.")) : null);
+  renderGate();
 }
 const stat = (n, label, cls) => h("div", { class: `v-stat ${cls}` }, h("b", {}, n), h("span", {}, label));
 
@@ -376,11 +432,79 @@ async function downloadGateReport() {
   } catch (err) { alert(`Gate report failed: ${err.message}`); }
 }
 
+async function renderGate() {
+  const out = $("#gate-out");
+  const form = new FormData($("#gate-form"));
+  const q = new URLSearchParams({ fail_on: form.get("fail_on"), ignore_dev: !!form.get("ignore_dev"), fail_on_unknown: !!form.get("fail_on_unknown") });
+  out.replaceChildren(h("p", { class: "muted" }, "Evaluating policy…"));
+  let g;
+  try { g = await api(`/api/scans/${encodeURIComponent(scan.scan_id)}/gate?${q}`); }
+  catch (err) { out.replaceChildren(h("p", { class: "error" }, `Gate unavailable: ${err.message}`)); return; }
+  const byId = Object.fromEntries(scan.result.findings.map((f) => [f.id, f]));
+  const blocking = g.blocking.map((id) => byId[id]).filter(Boolean).sort(byPriority);
+  const p = g.policy;
+  const cmd = `python -m tracii scan --dir . --fail-on ${p.fail_on}${p.ignore_dev ? " --ignore-dev" : ""}${p.fail_on_unknown ? " --fail-on-unknown" : ""} --sarif tracii.sarif`;
+  out.replaceChildren(
+    h("div", { class: "gate-row" },
+      h("div", { class: `gate-badge g-${g.outcome}` }, g.outcome.toUpperCase(), h("small", {}, `exit code ${g.exit_code}`)),
+      h("div", { class: "v-stats" }, stat(g.blocking.length, "blocking", "vuln"), stat(g.non_blocking, "below threshold", ""),
+        stat(g.unknown_severity.length, "unknown severity", ""), g.ignored_dev ? stat(g.ignored_dev, "ignored (dev only)", "") : null)),
+    g.failed_checks.length ? h("p", { class: "warn" }, `Incomplete: required check(s) did not run: ${g.failed_checks.join(", ")}. No findings from a check that did not run is not a pass.`) : null,
+    h("p", { class: "muted" }, `Gated categories: ${p.categories.join(", ")}. Repository posture never fails the build. Known vulnerabilities and malicious-behaviour findings are gated by severity alike; the findings table keeps them apart.`),
+    blocking.length ? h("details", { open: blocking.length <= 8 }, h("summary", {}, `Blocking findings (${blocking.length})`),
+      h("ul", {}, blocking.map((f) => h("li", {}, h("span", { class: `sev ${f.severity}` }, f.severity), " ",
+        h("button", { class: "linklike mono", onclick: () => openFinding(f.id) }, `${f.package}@${f.version}`), ` ${f.rule_or_advisory}`,
+        isKnownMalware(f) ? h("span", { class: "tag malware" }, "known malware") : null)))) : null,
+    h("div", { class: "row" }, h("span", { class: "muted" }, "Same decision in CI:"), h("code", { class: "mono cmd" }, cmd)),
+  );
+}
+$("#gate-form").addEventListener("change", () => scan && renderGate());
+
+const COPYLEFT = /\b(A?GPL|LGPL|MPL|EPL|EUPL|SSPL|CDDL|OSL|CC-BY-SA)/i;
+function renderLicenses(inv) {
+  const prod = inv.packages.filter((p) => !p.dev);
+  const counts = {};
+  prod.forEach((p) => { const k = p.license || "not recorded"; counts[k] = (counts[k] || 0) + 1; });
+  const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const flagged = prod.filter((p) => !p.license || COPYLEFT.test(p.license));
+  $("#licenses").replaceChildren(
+    inv.lockfile_version < 2 ? h("p", { class: "warn" }, "Lockfile v1 does not record licenses.") : null,
+    h("p", { class: "muted" }, `${prod.length} production package${prod.length === 1 ? "" : "s"} (devDependencies excluded). Licenses are also written to the SBOM.`),
+    h("div", { class: "row" }, rows.map(([k, n]) => h("span", { class: `tag ${k === "not recorded" || COPYLEFT.test(k) ? "unavailable" : ""}` }, `${k} · ${n}`))),
+    flagged.length ? h("details", {}, h("summary", {}, `${flagged.length} to review (copyleft or no license recorded)`),
+      h("ul", {}, flagged.slice(0, 50).map((p) => h("li", { class: "mono" }, `${p.name}@${p.version} · ${p.license || "not recorded"}`))))
+      : h("p", { class: "muted" }, "No copyleft or missing licenses among production packages."));
+}
+
+// 95% Wilson score interval, computed from the published counts (nothing typed in by hand)
+function wilson(k, n) {
+  const z = 1.96, p = k / n, d = 1 + z * z / n;
+  const c = (p + z * z / (2 * n)) / d, m = (z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d;
+  return `${Math.round(100 * Math.max(0, c - m))}–${Math.round(100 * Math.min(1, c + m))}%`;
+}
+const pct = (k, n) => `${k}/${n} (${Math.round((100 * k) / n)}%)`;
+api("/api/benchmark").then((b) => {
+  $("#eval-out").replaceChildren(
+    h("p", { class: "muted" }, b.disclaimer),
+    h("table", { class: "mini eval" },
+      h("thead", {}, h("tr", {}, ["Held-out set", "TRACII rules only", "+ OSV known-malware list", "False alarms (benign)"].map((x) => h("th", {}, x)))),
+      h("tbody", {}, b.sets.map((st) => h("tr", {},
+        h("td", {}, st.name, h("div", { class: "muted" }, `${st.malware.n} malware / ${st.benign.n} benign · ${st.rules_round}`)),
+        h("td", {}, h("b", {}, pct(st.malware.rules, st.malware.n)), h("div", { class: "muted" }, `95% CI ${wilson(st.malware.rules, st.malware.n)}`)),
+        h("td", {}, pct(st.malware.rules_plus_osv, st.malware.n)),
+        h("td", {}, h("b", {}, pct(st.benign.false_alarms, st.benign.n)), h("div", { class: "muted" }, `95% CI ${wilson(st.benign.false_alarms, st.benign.n)}`)))))),
+    h("p", { class: "muted" }, h("b", {}, "Rules only: "), b.detectors.rules), h("p", { class: "muted" }, h("b", {}, "+ OSV: "), b.detectors.rules_plus_osv),
+    h("details", {}, h("summary", {}, "Method, data and caveats"),
+      h("ul", {}, [b.task, `Malware: ${b.malware_source}.`, `Benign: ${b.benign_source}.`, ...b.sets.flatMap((st) => st.notes || []), ...b.caveats].map((x) => h("li", { class: "muted" }, x))),
+      h("p", { class: "muted" }, `Source: ${b.source}.`)));
+}).catch((err) => $("#eval-out").replaceChildren(h("p", { class: "error" }, `Benchmark unavailable: ${err.message}`)));
+
 // ---------- model intelligence ----------
 const STATUS_TEXT = { verified: "connected", failed: "failed", configured: "configured · not yet called", not_configured: "not configured" };
 const ROLE_NAME = { investigator: "Muse Spark", deep: "Muse Wonder", image: "Muse Image", voice: "Muse Voice Transcribe", segment: "SAM 3.1",
   independent_glimmer: "Muse Glimmer", independent_spark_open: "Muse Spark Open", dev_agent: "Muse Code" };
 
+const ago = (t) => { const s = Math.max(0, Math.round(Date.now() / 1000 - t)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : new Date(t * 1000).toLocaleTimeString(); };
 function modelRows(rows, checks = []) {
   const byRole = Object.fromEntries(checks.map((c) => [c.role, c]));
   return h("div", { class: "models" }, rows.map((r) => {
@@ -389,7 +513,8 @@ function modelRows(rows, checks = []) {
     return h("div", { class: `model m-${st}` },
       h("div", { class: "row" }, h("b", {}, ROLE_NAME[r.role] || r.role), h("span", { class: "mono muted" }, r.model),
         h("span", { class: `tag ${st}` }, r.role === "dev_agent" ? "development-time only" : STATUS_TEXT[r.status] || r.status),
-        c?.ok ? h("span", { class: "muted" }, `${c.latency_s}s`) : null),
+        r.check_latency_s != null ? h("span", { class: "muted" }, `last check ${r.check_latency_s}s`) : null,
+        r.last_ok_at ? h("span", { class: "muted" }, `· last success ${ago(r.last_ok_at)}`) : null),
       h("div", { class: "muted" }, r.feature),
       r.note ? h("div", { class: "muted" }, r.note) : null,
       r.error ? h("div", { class: "error" }, r.error) : null);

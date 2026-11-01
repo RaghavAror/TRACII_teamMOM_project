@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 
 from tracii.ai import grounding
 from tracii.ai.meta_client import ModelUnavailable, OpenAICompatClient
@@ -31,21 +34,41 @@ def explain(finding: Finding, slices: list[Slice], client: OpenAICompatClient, d
                 **grounding.deterministic_summary(finding, paths)}
 
 
-def independent_assessments(finding: Finding, slices: list[Slice], primary: dict) -> list[dict]:
-    """Ask configured open-weight models for a second opinion; report agreement, never override."""
-    out = []
+def independent_assessments(finding: Finding, slices: list[Slice], primary: dict,
+                            timeout: float | None = None) -> list[dict]:
+    """Ask configured open-weight models for a second opinion; report agreement, never override.
+
+    Assessors run in parallel. With `timeout`, any assessor still running after that many seconds is
+    reported as "timeout" (free hosted tiers can take minutes) so an interactive request is not held up."""
     paths = [" -> ".join(p.nodes) for p in finding.paths[:3]]
     prompt = grounding.build_user_prompt(finding, slices, [], paths)
-    for name, (client, model) in open_weight_clients().items():
+
+    def one(name: str, client, model: str) -> dict:
         try:
             raw = client.chat_json(model, grounding.SYSTEM_PROMPT, prompt, grounding.INVESTIGATION_SCHEMA,
                                    "tracii_investigation", strict=False)
             v = grounding.validate_investigation(raw, finding)
-            out.append({"assessor": name, "model": model, "status": "ok", "assessment": v["assessment"],
-                        "agrees_with_primary": v["assessment"] == primary.get("assessment"),
-                        "claims": v["claims"], "discarded_claims": v["discarded_claims"]})
+            return {"assessor": name, "model": model, "status": "ok", "assessment": v["assessment"],
+                    "agrees_with_primary": v["assessment"] == primary.get("assessment"),
+                    "claims": v["claims"], "discarded_claims": v["discarded_claims"]}
         except ModelUnavailable as exc:
-            out.append({"assessor": name, "model": model, "status": "unavailable", "error": str(exc)[:200]})
+            return {"assessor": name, "model": model, "status": "unavailable", "error": str(exc)[:200]}
+
+    clients = open_weight_clients()
+    if not clients:
+        return []
+    pool = ThreadPoolExecutor(max_workers=len(clients))
+    jobs = {name: (model, pool.submit(one, name, client, model)) for name, (client, model) in clients.items()}
+    pool.shutdown(wait=False)   # a timed-out assessor finishes in the background; its result is dropped
+    deadline = None if timeout is None else time.monotonic() + timeout
+    out = []
+    for name, (model, job) in jobs.items():
+        try:
+            out.append(job.result(None if deadline is None else max(0.0, deadline - time.monotonic())))
+        except FutureTimeout:
+            out.append({"assessor": name, "model": model, "status": "timeout",
+                        "error": f"no answer within {timeout:.0f} s (hosted free tiers can take minutes); "
+                                 "the investigation agents panel keeps waiting for reviews in the background"})
     return out
 
 

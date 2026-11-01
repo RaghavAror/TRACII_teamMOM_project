@@ -1,0 +1,41 @@
+{
+  "kind": "fixed_benchmark",
+  "disclaimer": "Fixed, labelled benchmark measured offline. Not computed from your scan and not updated by it.",
+  "source": "README.md, section 'Evaluation (malicious-package detection)'; measured with scripts/evaluate_dataset.py (rules as of commit ca4628c, 2026-11-01)",
+  "task": "Is this npm package malicious? 'Flagged' = a malicious-behaviour finding with severity medium or higher.",
+  "malware_source": "DataDog malicious-software-packages-dataset (Apache-2.0), commit 3fc8a1f; samples read in memory from encrypted zips, never extracted, installed or run",
+  "benign_source": "npm registry",
+  "detectors": {
+    "rules": "TRACII's own static behaviour rules (backend/tracii/detect/static_rules.py), as text, without running code. The number that matters for new, unreported malware.",
+    "rules_plus_osv": "Rules plus the OSV known-malware list (MAL- records). OSV only knows already-reported malware, and every sample here was reported, which flatters it."
+  },
+  "sets": [
+    {
+      "name": "Locked test split (chainviz-v2 dataset)",
+      "rules_round": "round 1",
+      "malware": {"n": 33, "rules": 19, "rules_plus_osv": 31},
+      "benign": {"n": 105, "false_alarms": 3}
+    },
+    {
+      "name": "Fresh unseen set 1",
+      "rules_round": "round 2",
+      "malware": {"n": 58, "rules": 36, "rules_plus_osv": 52},
+      "benign": {"n": 100, "false_alarms": 5}
+    },
+    {
+      "name": "Fresh unseen set 2 (current rules)",
+      "rules_round": "round 3 (current)",
+      "malware": {"n": 60, "rules": 37, "rules_plus_osv": 53},
+      "benign": {"n": 98, "false_alarms": 2},
+      "notes": ["0/40 false alarms on popular packages, 0/20 on older (2023-24) releases of popular packages, 0/18 on packages with install scripts",
+                "Rules catch 66% of the malware samples that contain code; some samples are a bare package.json and count as misses"]
+    }
+  ],
+  "caveats": [
+    "Each set was locked before that round of rule changes and run once; these holdouts are now used up.",
+    "Small samples: read the 95% intervals, not the decimals.",
+    "Labels are DataDog's and were not independently verified. Benign packages skew newer than the malware. Packages over 25 MB were skipped.",
+    "GuardDog was not run on the malware (it needs an on-disk copy).",
+    "Raw per-sample outputs are not committed (results/*.local.json are git-ignored); reproduce with the commands in the README."
+  ]
+}

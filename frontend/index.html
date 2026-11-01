@@ -24,10 +24,10 @@
 <main>
   <section class="hero">
     <p class="eyebrow">Application &amp; software supply-chain security</p>
-    <h1>AI-powered security intelligence for your <span class="grad">npm dependencies</span></h1>
-    <p class="lede">TRACII resolves every package in your lockfile, matches it against OSV advisories and known-malware records,
-      reads prioritised package code for malicious install-time behaviour <b>without installing or running it</b>, traces how each
-      risk reaches your app, and explains it with evidence-cited Meta Muse models.</p>
+    <h1>See how every risky dependency <span class="grad">reaches your app</span></h1>
+    <p class="lede">Traditional tools list vulnerable packages. TRACII <b>investigates</b> them: the path each one takes into your
+      app, the evidence behind it, what to change, and a rescan that proves the fix worked. Package code is read, <b>never installed or run</b>;
+      Meta Muse models explain the scanner's evidence and never overrule it.</p>
     <ul class="caps">
       <li><b>SCA</b> known vulnerabilities (OSV / GHSA)</li>
       <li><b>Malware</b> OSV MAL- records + behaviour rules + GuardDog</li>
@@ -49,8 +49,8 @@
     <form id="form-fixture" class="tab-panel">
       <select name="name" id="fixture-select" aria-label="demo project"></select>
       <button class="primary">Scan demo</button>
-      <p class="hint">A bundled project pinned to versions with public advisories (fixtures/projects). Its findings come from a live
-        scan of that lockfile, not from cached results. Never install it.</p>
+      <p class="hint"><b>vulnerable-demo</b>: 53 packages pinned to versions with public advisories. <b>clean-demo</b>: 3 packages with no
+        known advisories, to show TRACII reports nothing it cannot back with evidence. Both are scanned live (OSV, rules, GuardDog); nothing is cached.</p>
     </form>
     <form id="form-github" class="tab-panel hidden">
       <input name="url" placeholder="https://github.com/owner/repo  (or …/tree/branch)" required aria-label="GitHub repository URL">
@@ -64,23 +64,16 @@
       <label class="file">package.json <input type="file" name="package_json" accept=".json" required></label>
       <label class="file">package-lock.json <input type="file" name="package_lock" accept=".json" required></label>
       <button class="primary">Scan files</button>
-      <p class="hint">Lockfile v1, v2 or v3, up to 20 MB each. Files are parsed as data and kept in memory only.</p>
+      <p class="hint">Upload the two files from your project root: <b>package.json</b> (what you declared) and <b>package-lock.json</b>
+        (the exact versions installed; run <span class="mono">npm install --package-lock-only --ignore-scripts</span> if you have none).
+        Lockfile v1–v3, up to 20 MB each, parsed as data and kept in memory only.</p>
     </form>
     <div id="progress" class="progress hidden" aria-live="polite"></div>
   </section>
 
   <section id="results" class="hidden">
     <div id="verdict" class="verdict card"></div>
-
-    <div class="card">
-      <div class="card-head">
-        <h2>What was checked</h2>
-        <div id="exports" class="exports"></div>
-      </div>
-      <div id="source-line" class="mono"></div>
-      <ul id="checks" class="checks"></ul>
-      <div id="warnings"></div>
-    </div>
+    <div class="toolbar"><div id="source-line" class="mono"></div><div id="exports" class="exports"></div></div>
 
     <div class="card">
       <h2>Findings by type <small>kept separate, never merged into one score</small></h2>
@@ -91,6 +84,7 @@
       <h2>Dependency graph <small>3D · colour = scanner result · size = packages that depend on it</small></h2>
       <div class="row graph-bar">
         <label class="muted"><input type="checkbox" id="graph-flagged"> only paths to findings</label>
+        <button type="button" id="graph-focus" class="ghost sm">Focus highest-priority finding</button>
         <span id="graph-stats" class="muted"></span>
       </div>
       <div class="graph-wrap">
@@ -98,9 +92,9 @@
         <aside id="graph-info"><p class="muted">Click a node to see its findings and every package above it. Drag to rotate, scroll to zoom.</p></aside>
       </div>
       <div class="legend">
-        <span><i style="background:var(--accent)"></i>your app</span><span><i style="background:var(--crit)"></i>critical vuln</span>
+        <span><i style="background:var(--g-app);outline:1px solid var(--line)"></i>your app</span><span><i style="background:var(--crit)"></i>critical vuln</span>
         <span><i style="background:var(--high)"></i>high</span><span><i style="background:var(--med)"></i>medium</span><span><i style="background:var(--low)"></i>low</span>
-        <span><i style="background:var(--g-mal)"></i>malicious-behaviour indicator (low+)</span><span><i style="background:var(--g-clean)"></i>no finding</span>
+        <span><i style="background:var(--g-known)"></i>known malware (OSV MAL-)</span><span><i style="background:var(--g-mal)"></i>suspicious behaviour (heuristic, low+)</span><span><i style="background:var(--g-clean)"></i>no finding</span>
         <span><i style="background:var(--g-dev)"></i>dev only</span><span><i style="background:var(--g-target)"></i>replay target</span>
         <span><i style="background:var(--g-ghost)"></i>injected (replay)</span><span><i style="background:var(--g-wave)"></i>exposed (replay)</span>
       </div>
@@ -124,6 +118,30 @@
       <div class="card sticky" id="detail"><div class="empty"><p><b>Select a finding</b></p><p class="muted">Evidence, dependency path, fix and AI investigation appear here.</p></div></div>
     </div>
 
+    <div class="card" id="gate-card">
+      <div class="card-head">
+        <h2>CI security gate <small>same policy code as the GitHub Action and <span class="mono">tracii scan</span>, applied to this scan</small></h2>
+        <form id="gate-form" class="row">
+          <label class="muted">fail on <select name="fail_on"><option>critical</option><option selected>high</option><option>medium</option><option>low</option><option>none</option></select></label>
+          <label class="muted"><input type="checkbox" name="ignore_dev"> ignore dev-only</label>
+          <label class="muted"><input type="checkbox" name="fail_on_unknown"> gate unknown severity</label>
+        </form>
+      </div>
+      <div id="gate-out"></div>
+    </div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2>What was checked <small>no findings from a check that did not run is not a pass</small></h2>
+        <ul id="checks" class="checks"></ul>
+        <div id="warnings"></div>
+      </div>
+      <div class="card">
+        <h2>Licenses <small>declared in the lockfile · not legal advice</small></h2>
+        <div id="licenses"></div>
+      </div>
+    </div>
+
     <div class="card">
       <h2>Ask about this scan <small>Muse Spark · answers cite finding IDs</small></h2>
       <form id="ask-form" class="row">
@@ -138,19 +156,22 @@
   <section class="card">
     <h2>Version-to-version security diff <small>what changed between two releases of one package</small></h2>
     <form id="diff-form" class="row">
-      <input name="package" placeholder="package (e.g. event-stream)" required>
-      <input name="old_version" placeholder="old version" required>
-      <input name="new_version" placeholder="new version" required>
+      <input name="package" placeholder="package (e.g. node-ipc)" required>
+      <input name="old_version" placeholder="old version (e.g. 9.2.1)" required>
+      <input name="new_version" placeholder="new version (e.g. 10.1.0)" required>
       <button>Compare</button>
+      <p class="hint">Both tarballs are fetched from npm, integrity-checked and read in memory, never installed. npm unpublishes confirmed
+        malware, so the historical malicious versions (e.g. event-stream 3.3.6) can no longer be compared.</p>
     </form>
     <div id="diff-out"></div>
   </section>
 
   <div class="grid two">
     <section class="card" id="ci">
-      <h2>CI security gate</h2>
-      <p class="muted">The same scan as a GitHub Action: fails the build on blocking findings, uploads SARIF to the Security tab and writes a CycloneDX SBOM.
-        Exit codes: <b>0</b> pass · <b>1</b> blocking findings · <b>2</b> incomplete scan.</p>
+      <h2>Add the gate to CI <small>example configuration</small></h2>
+      <p class="muted">The same scan as a GitHub Action (inputs from <span class="mono">action.yml</span>): fails the build on blocking findings, uploads SARIF to the
+        Security tab and writes a CycloneDX SBOM. Exit codes: <b>0</b> pass · <b>1</b> blocking findings · <b>2</b> incomplete scan.
+        After a scan, the live gate decision for that project appears with the results.</p>
       <pre class="snippet">on: [pull_request, push]
 permissions: { contents: read, security-events: write }
 jobs:
@@ -167,17 +188,8 @@ jobs:
     </section>
 
     <section class="card" id="evaluation">
-      <h2>Evaluation <small>malicious-package detection, held-out data, run once</small></h2>
-      <table class="mini eval">
-        <thead><tr><th>Held-out set</th><th>Code rules only</th><th>+ OSV known-malware</th><th>False alarms</th></tr></thead>
-        <tbody>
-          <tr><td>Locked test split (33 malware / 105 benign)</td><td><b>19/33</b> (58%)</td><td>31/33 (94%)</td><td><b>3/105</b> (2.9%)</td></tr>
-          <tr><td>Fresh unseen set, current rules (60 / 98)</td><td><b>37/60</b> (62%)</td><td>53/60 (88%)</td><td><b>2/98</b> (2.0%)</td></tr>
-        </tbody>
-      </table>
-      <p class="muted">Code rules = TRACII on its own (the number that matters for <i>new</i> malware). OSV only knows already-reported malware,
-        and every sample here was reported, which flatters it. Samples are small: detection ±≈12 points, false alarms ≈1–8%.
-        Malware is from DataDog's labelled dataset, read in memory only, never extracted or run. Method and caveats: README › Evaluation.</p>
+      <h2>Evaluation <small>fixed benchmark · not computed from your scan</small></h2>
+      <div id="eval-out"><p class="muted">Loading benchmark…</p></div>
     </section>
   </div>
 </main>

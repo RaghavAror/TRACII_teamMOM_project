@@ -6,7 +6,7 @@
   --mal: #b42318; --sus: #8e44ad;
   --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 4px 16px rgba(16, 24, 40, .05);
   /* 3D graph: always drawn on a dark canvas so colours read the same in both themes */
-  --g-bg: #0b1017; --g-clean: #5f7f99; --g-dev: #3a4652; --g-mal: #a35bd6; --g-target: #ff3b30;
+  --g-bg: #0b1017; --g-clean: #5f7f99; --g-dev: #3a4652; --g-mal: #a35bd6; --g-known: #facc15; --g-app: #f8fafc; --g-target: #ff3b30;
   --g-ghost: #ff2d95; --g-wave: #19d3c5; --g-hl: #7ff0e6; --g-link: #34404c; --g-dim: #222b34;
   font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color-scheme: light dark;
@@ -199,3 +199,22 @@ table.eval { width: 100%; font-size: 13px; } table.eval tbody tr { cursor: defau
 .tag.prio-insufficient_evidence { border-color: var(--info); color: var(--info); }
 .tag.ctl-strong { border-color: var(--ok); color: var(--ok); }
 .tag.ctl-weak, .tag.ctl-missing { border-color: var(--med); color: var(--med); }
+
+/* investigation workspace additions */
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px 16px; flex-wrap: wrap; padding: 2px 4px; }
+.toolbar #source-line { color: var(--muted); }
+.v-top { display: flex; justify-content: space-between; align-items: center; gap: 18px; flex-wrap: wrap; width: 100%; }
+.verdict { flex-direction: column; align-items: stretch; }
+.v-first { border-top: 1px solid var(--line); padding-top: 12px; width: 100%; }
+.v-first ol { margin: 6px 0; padding-left: 20px; } .v-first li { margin: 3px 0; }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 10px 0; font-size: 13px; }
+dl.facts dt { color: var(--muted); } dl.facts dd { margin: 0; }
+.action { padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); margin: 8px 0; }
+.action.mal { background: color-mix(in srgb, var(--mal) 10%, transparent); border-color: color-mix(in srgb, var(--mal) 35%, transparent); }
+.gate-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.gate-badge { display: grid; place-items: center; min-width: 120px; padding: 10px 16px; border-radius: 14px; font-size: 22px; font-weight: 800; letter-spacing: .06em; color: #fff; background: var(--info); }
+.gate-badge small { font-size: 11px; font-weight: 500; letter-spacing: 0; opacity: .9; }
+.gate-badge.g-pass { background: var(--ok); } .gate-badge.g-fail { background: var(--high); } .gate-badge.g-incomplete { background: var(--med); }
+code.cmd { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; overflow-x: auto; max-width: 100%; }
+#gate-form select { padding: 4px 8px; }
+#gate-form input { flex: none; }
