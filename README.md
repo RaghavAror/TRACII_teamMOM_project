@@ -256,7 +256,7 @@ medium or higher.
 On fresh set 2: 0/40 false alarms on popular packages, 0/20 on older (2023–24) releases of popular packages, 0/18 on
 packages with install scripts. The OSV list itself raised no false alarms on any benign package.
 
-The web UI's Evaluation card reads these figures from `backend/tracii/eval/benchmark.json` (a test checks they match this table) and computes the 95% intervals from the counts.
+The same figures are available as structured data at `GET /api/benchmark` (`backend/tracii/eval/benchmark.json`); a test checks they match this table.
 
 > [!TIP]
 > **How to read it**

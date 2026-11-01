@@ -493,28 +493,6 @@ function renderLicenses(inv) {
       : h("p", { class: "muted" }, "No copyleft or missing licenses among production packages."));
 }
 
-// 95% Wilson score interval, computed from the published counts (nothing typed in by hand)
-function wilson(k, n) {
-  const z = 1.96, p = k / n, d = 1 + z * z / n;
-  const c = (p + z * z / (2 * n)) / d, m = (z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d;
-  return `${Math.round(100 * Math.max(0, c - m))}–${Math.round(100 * Math.min(1, c + m))}%`;
-}
-const pct = (k, n) => `${k}/${n} (${Math.round((100 * k) / n)}%)`;
-api("/api/benchmark").then((b) => {
-  $("#eval-out").replaceChildren(
-    h("p", { class: "muted" }, b.disclaimer),
-    h("table", { class: "mini eval" },
-      h("thead", {}, h("tr", {}, ["Held-out set", "TRACII rules only", "+ OSV known-malware list", "False alarms (benign)"].map((x) => h("th", {}, x)))),
-      h("tbody", {}, b.sets.map((st) => h("tr", {},
-        h("td", {}, st.name, h("div", { class: "muted" }, `${st.malware.n} malware / ${st.benign.n} benign · ${st.rules_round}`)),
-        h("td", {}, h("b", {}, pct(st.malware.rules, st.malware.n)), h("div", { class: "muted" }, `95% CI ${wilson(st.malware.rules, st.malware.n)}`)),
-        h("td", {}, pct(st.malware.rules_plus_osv, st.malware.n)),
-        h("td", {}, h("b", {}, pct(st.benign.false_alarms, st.benign.n)), h("div", { class: "muted" }, `95% CI ${wilson(st.benign.false_alarms, st.benign.n)}`)))))),
-    h("p", { class: "muted" }, h("b", {}, "Rules only: "), b.detectors.rules), h("p", { class: "muted" }, h("b", {}, "+ OSV: "), b.detectors.rules_plus_osv),
-    h("details", {}, h("summary", {}, "Method, data and caveats"),
-      h("ul", {}, [b.task, `Malware: ${b.malware_source}.`, `Benign: ${b.benign_source}.`, ...b.sets.flatMap((st) => st.notes || []), ...b.caveats].map((x) => h("li", { class: "muted" }, x))),
-      h("p", { class: "muted" }, `Source: ${b.source}.`)));
-}).catch((err) => $("#eval-out").replaceChildren(h("p", { class: "error" }, `Benchmark unavailable: ${err.message}`)));
 
 // ---------- model intelligence ----------
 const STATUS_TEXT = { verified: "connected", failed: "failed", configured: "configured · not yet called", not_configured: "not configured" };
