@@ -3,55 +3,87 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tracii</title>
+  <title>TRACII · AI-powered Application & Supply Chain Security Intelligence</title>
+  <meta name="description" content="Scan npm projects for known vulnerabilities, known malicious packages and suspicious install-time behaviour, with evidence, dependency paths, SBOM/SARIF export and evidence-grounded Meta AI investigation.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%230866ff'/><stop offset='1' stop-color='%237c3aed'/></linearGradient></defs><rect width='32' height='32' rx='8' fill='url(%23g)'/><path d='M9 10h14M16 10v13' stroke='white' stroke-width='3.2' stroke-linecap='round'/></svg>">
   <link rel="stylesheet" href="styles.css">
   <script src="config.js"></script>
   <script type="module" src="app.js"></script>
 </head>
 <body>
 <header class="top">
-  <div class="brand">TRACII <span>npm supply-chain investigator</span></div>
-  <button id="models-btn" class="ghost">Model status</button>
+  <a class="brand" href="#"><span class="logo" aria-hidden="true">T</span>TRACII</a>
+  <nav class="nav">
+    <a href="#intake">Scan</a>
+    <a href="#evaluation">Evaluation</a>
+    <a href="#ci">CI gate</a>
+    <button id="models-btn" class="ghost sm"><span id="models-dot" class="dot"></span>Model intelligence</button>
+  </nav>
 </header>
 
 <main>
-  <section id="intake" class="card">
-    <h2>1 · Scan a project</h2>
-    <div class="tabs" role="tablist">
-      <button data-tab="github" class="active">GitHub repo</button>
-      <button data-tab="upload">Upload files</button>
-      <button data-tab="fixture">Demo project</button>
+  <section class="hero">
+    <p class="eyebrow">Application &amp; software supply-chain security</p>
+    <h1>AI-powered security intelligence for your <span class="grad">npm dependencies</span></h1>
+    <p class="lede">TRACII resolves every package in your lockfile, matches it against OSV advisories and known-malware records,
+      reads prioritised package code for malicious install-time behaviour <b>without installing or running it</b>, traces how each
+      risk reaches your app, and explains it with evidence-cited Meta Muse models.</p>
+    <ul class="caps">
+      <li><b>SCA</b> known vulnerabilities (OSV / GHSA)</li>
+      <li><b>Malware</b> OSV MAL- records + behaviour rules + GuardDog</li>
+      <li><b>Impact</b> direct &amp; transitive dependency paths</li>
+      <li><b>Fix</b> proposed change, verified by rescan</li>
+      <li><b>Export</b> CycloneDX SBOM · SARIF · CI gate</li>
+    </ul>
+  </section>
+
+  <section id="intake" class="card intake">
+    <div class="intake-head">
+      <h2>Start an investigation</h2>
+      <div class="tabs seg" role="tablist">
+        <button data-tab="fixture" class="active">Demo project</button>
+        <button data-tab="github">GitHub repo</button>
+        <button data-tab="upload">Upload lockfile</button>
+      </div>
     </div>
-    <form id="form-github" class="tab-panel">
-      <input name="url" placeholder="https://github.com/owner/repo  (or …/tree/branch)" required>
-      <input name="subdir" placeholder="sub-directory (optional, e.g. packages/web)">
-      <button>Scan</button>
-      <p class="hint">Only package.json and package-lock.json are fetched, pinned to the resolved commit SHA. Nothing is installed.</p>
+    <form id="form-fixture" class="tab-panel">
+      <select name="name" id="fixture-select" aria-label="demo project"></select>
+      <button class="primary">Scan demo</button>
+      <p class="hint">A bundled project pinned to versions with public advisories (fixtures/projects). Its findings come from a live
+        scan of that lockfile, not from cached results. Never install it.</p>
+    </form>
+    <form id="form-github" class="tab-panel hidden">
+      <input name="url" placeholder="https://github.com/owner/repo  (or …/tree/branch)" required aria-label="GitHub repository URL">
+      <input name="subdir" placeholder="sub-directory (optional)" class="narrow" aria-label="sub-directory">
+      <button class="primary">Scan repository</button>
+      <p class="hint">Try: <button type="button" class="linklike" data-example="https://github.com/OWASP/NodeGoat">OWASP/NodeGoat</button> ·
+        <button type="button" class="linklike" data-example="https://github.com/snyk-labs/nodejs-goof">snyk-labs/nodejs-goof</button>.
+        Public repos only. Only package.json and package-lock.json are fetched, pinned to the resolved commit SHA. Nothing is installed.</p>
     </form>
     <form id="form-upload" class="tab-panel hidden">
-      <label>package.json <input type="file" name="package_json" accept=".json" required></label>
-      <label>package-lock.json <input type="file" name="package_lock" accept=".json" required></label>
-      <button>Scan</button>
+      <label class="file">package.json <input type="file" name="package_json" accept=".json" required></label>
+      <label class="file">package-lock.json <input type="file" name="package_lock" accept=".json" required></label>
+      <button class="primary">Scan files</button>
+      <p class="hint">Lockfile v1, v2 or v3, up to 20 MB each. Files are parsed as data and kept in memory only.</p>
     </form>
-    <form id="form-fixture" class="tab-panel hidden">
-      <select name="name" id="fixture-select"></select>
-      <button>Scan demo</button>
-      <p class="hint">Pinned to versions with public advisories. Never install it.</p>
-    </form>
-    <div id="progress" class="progress hidden"></div>
+    <div id="progress" class="progress hidden" aria-live="polite"></div>
   </section>
 
   <section id="results" class="hidden">
+    <div id="verdict" class="verdict card"></div>
+
     <div class="card">
-      <h2>2 · What was checked</h2>
+      <div class="card-head">
+        <h2>What was checked</h2>
+        <div id="exports" class="exports"></div>
+      </div>
       <div id="source-line" class="mono"></div>
-      <div id="exports" class="exports"></div>
       <ul id="checks" class="checks"></ul>
       <div id="warnings"></div>
     </div>
 
     <div class="card">
-      <h2>3 · Summary <small>categories are never merged into one score</small></h2>
+      <h2>Findings by type <small>kept separate, never merged into one score</small></h2>
       <div id="summary" class="summary"></div>
     </div>
 
@@ -84,16 +116,16 @@
 
     <div class="grid">
       <div class="card">
-        <h2>4 · Findings</h2>
+        <h2>Findings</h2>
         <div class="tabs" id="cat-tabs"></div>
-        <input id="filter" placeholder="filter by package…">
+        <input id="filter" placeholder="filter by package…" aria-label="filter findings by package">
         <table id="findings"><thead><tr><th>Severity</th><th>Package</th><th>Rule / advisory</th><th>Source</th><th>Path</th></tr></thead><tbody></tbody></table>
       </div>
-      <div class="card" id="detail"><p class="muted">Select a finding to see evidence, impact and a fix.</p></div>
+      <div class="card sticky" id="detail"><div class="empty"><p><b>Select a finding</b></p><p class="muted">Evidence, dependency path, fix and AI investigation appear here.</p></div></div>
     </div>
 
     <div class="card">
-      <h2>Ask about this scan</h2>
+      <h2>Ask about this scan <small>Muse Spark · answers cite finding IDs</small></h2>
       <form id="ask-form" class="row">
         <input name="q" placeholder="e.g. Which direct dependency should I upgrade first?" minlength="3" required>
         <button>Ask</button>
@@ -104,7 +136,7 @@
   </section>
 
   <section class="card">
-    <h2>Version-to-version security diff</h2>
+    <h2>Version-to-version security diff <small>what changed between two releases of one package</small></h2>
     <form id="diff-form" class="row">
       <input name="package" placeholder="package (e.g. event-stream)" required>
       <input name="old_version" placeholder="old version" required>
@@ -113,9 +145,44 @@
     </form>
     <div id="diff-out"></div>
   </section>
+
+  <div class="grid two">
+    <section class="card" id="ci">
+      <h2>CI security gate</h2>
+      <p class="muted">The same scan as a GitHub Action: fails the build on blocking findings, uploads SARIF to the Security tab and writes a CycloneDX SBOM.
+        Exit codes: <b>0</b> pass · <b>1</b> blocking findings · <b>2</b> incomplete scan.</p>
+      <pre class="snippet">on: [pull_request, push]
+permissions: { contents: read, security-events: write }
+jobs:
+  tracii:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: RaghavAror/TRACII_teamMOM_project@main
+        with:
+          fail-on: high            # critical | high | medium | low | none
+          mode: enforce            # observe = report only
+          sbom-file: sbom.cdx.json</pre>
+      <p class="muted">Locally: <span class="mono">python -m tracii scan --dir my-app --fail-on high --sarif tracii.sarif --sbom sbom.cdx.json</span></p>
+    </section>
+
+    <section class="card" id="evaluation">
+      <h2>Evaluation <small>malicious-package detection, held-out data, run once</small></h2>
+      <table class="mini eval">
+        <thead><tr><th>Held-out set</th><th>Code rules only</th><th>+ OSV known-malware</th><th>False alarms</th></tr></thead>
+        <tbody>
+          <tr><td>Locked test split (33 malware / 105 benign)</td><td><b>19/33</b> (58%)</td><td>31/33 (94%)</td><td><b>3/105</b> (2.9%)</td></tr>
+          <tr><td>Fresh unseen set, current rules (60 / 98)</td><td><b>37/60</b> (62%)</td><td>53/60 (88%)</td><td><b>2/98</b> (2.0%)</td></tr>
+        </tbody>
+      </table>
+      <p class="muted">Code rules = TRACII on its own (the number that matters for <i>new</i> malware). OSV only knows already-reported malware,
+        and every sample here was reported, which flatters it. Samples are small: detection ±≈12 points, false alarms ≈1–8%.
+        Malware is from DataDog's labelled dataset, read in memory only, never extracted or run. Method and caveats: README › Evaluation.</p>
+    </section>
+  </div>
 </main>
 
-<dialog id="models-dialog"><div id="models-body"></div><form method="dialog"><button>Close</button></form></dialog>
-<footer>Results say what these checks detected. “No issue detected” is not a guarantee that a package is safe.</footer>
+<dialog id="models-dialog"><div id="models-body"></div><form method="dialog" class="dialog-actions"><button class="ghost">Close</button></form></dialog>
+<footer>Results say what these checks detected. “No issue detected” is not a guarantee that a package is safe. AI assessments are labelled and never change the scanner verdict.</footer>
 </body>
 </html>

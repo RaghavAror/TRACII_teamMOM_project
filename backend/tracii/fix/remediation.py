@@ -128,8 +128,51 @@ def resolver_mode() -> str:
     return "off"
 
 
+# Registry specs only: semver ranges, dist-tags, and `npm:` aliases. URL, git, GitHub-shorthand,
+# file: and link: specs would make the server's npm fetch arbitrary URLs or read local paths (SSRF).
+_RANGE_RE = re.compile(r"^[A-Za-z0-9.^~<>=|*+\- ]*$")
+_ALIAS_RE = re.compile(r"^npm:(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*(@[A-Za-z0-9.^~<>=|*+\- ]*)?$")
+_DEP_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
+
+
+def _safe_spec(spec: object) -> bool:
+    if isinstance(spec, dict):   # nested npm overrides
+        return all(_safe_spec(v) for v in spec.values())
+    if not isinstance(spec, str):
+        return False
+    return bool(_RANGE_RE.match(spec) or _ALIAS_RE.match(spec) or re.fullmatch(r"\$[A-Za-z0-9@/._-]+", spec))
+
+
+def check_resolvable(package_json: str, old_lockfile: bytes | None) -> None:
+    """Refuse inputs that would make `npm install --package-lock-only` reach beyond the public registry."""
+    try:
+        manifest = json.loads(package_json)
+    except ValueError as exc:
+        raise RuntimeError("package.json is not valid JSON") from exc
+    if "workspaces" in manifest:
+        raise RuntimeError("workspace projects are not simulated (npm would read paths outside the sandbox)")
+    for section in (*_DEP_SECTIONS, "overrides"):
+        for name, spec in (manifest.get(section) or {}).items():
+            if not _safe_spec(spec):
+                raise RuntimeError(f"{section}.{name} is not a registry version spec; fix simulation only "
+                                   "resolves packages from the public npm registry")
+    if old_lockfile:
+        try:
+            lock = json.loads(old_lockfile)
+        except ValueError as exc:
+            raise RuntimeError("package-lock.json is not valid JSON") from exc
+        entries = {**(lock.get("dependencies") or {}), **(lock.get("packages") or {})}
+        for path, entry in entries.items():
+            resolved = entry.get("resolved") if isinstance(entry, dict) else None
+            if (entry.get("link") if isinstance(entry, dict) else False) or (
+                    resolved and not resolved.startswith("https://registry.npmjs.org/")):
+                raise RuntimeError(f"lockfile entry {path or '<root>'!r} resolves outside registry.npmjs.org; "
+                                   "fix simulation only runs on registry-only lockfiles")
+
+
 def resolve_lockfile(package_json: str, old_lockfile: bytes | None, timeout: int = 240) -> bytes:
     """Return a regenerated package-lock.json. Raises RuntimeError if resolution cannot run."""
+    check_resolvable(package_json, old_lockfile)
     mode = resolver_mode()
     if mode == "off":
         raise RuntimeError("no npm resolver available (install npm or Docker, or set NPM_RESOLVER)")

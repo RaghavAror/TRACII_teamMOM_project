@@ -23,6 +23,7 @@ from tracii.intake import npm_registry
 from tracii.inventory.lockfile import build_inventory
 
 DEEP_SCAN_LIMIT = int(os.environ.get("DEEP_SCAN_LIMIT", "15"))
+MAX_STORED_SCANS = int(os.environ.get("MAX_STORED_SCANS", "100"))
 
 
 @dataclass
@@ -50,6 +51,10 @@ class Store:
         rec = ScanRecord(scan_id=uuid.uuid4().hex[:12])
         with self._lock:
             self._scans[rec.scan_id] = rec
+            # bounded memory on a public server: drop the oldest finished scans (dicts keep insertion order)
+            excess = len(self._scans) - MAX_STORED_SCANS
+            for sid in [s for s, r in self._scans.items() if r.status != "running"][:max(excess, 0)]:
+                del self._scans[sid]
         return rec
 
     def get(self, scan_id: str) -> ScanRecord | None:

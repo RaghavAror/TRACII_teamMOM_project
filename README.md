@@ -150,14 +150,28 @@ docs/          ARCHITECTURE.md · PLAN.md · MODELS.md · CHAINVIZ_AUDIT.md · M
 ```
 
 ## Deploy
-- **API → Render:** `render.yaml` (Docker, `backend/Dockerfile`, build context = repo root). Set `META_API_KEY`
-  and `ALLOWED_ORIGINS` in the Render dashboard.
-- **UI → Vercel:** `vercel.json` serves `frontend/`. Set `window.TRACII_API` in `frontend/config.js` to the Render URL.
+**One service, API + UI on the same origin (recommended):** `render.yaml` builds `backend/Dockerfile` (context = repo root)
+with OSV-Scanner, GuardDog and npm, and serves `frontend/` from the API (`SERVE_FRONTEND=1`), so there is no CORS or API URL to set.
+1. Render → **New → Blueprint** → this repo (or New → Web Service → Docker, Dockerfile path `backend/Dockerfile`, context `.`).
+2. Environment: `META_API_KEY` (optional; without it every AI feature falls back to a deterministic summary), `GITHUB_TOKEN`
+   (optional, read-only, raises the GitHub rate limit), optional `SPARK_OPEN_*` / `GLIMMER_*`. Leave `ALLOWED_ORIGINS` empty.
+3. Open `https://<service>.onrender.com/api/health`, then the root URL. **Model intelligence → Run live check** sends one minimal
+   request per configured model and shows connected / failed per model.
+
+Same image anywhere: `docker build -f backend/Dockerfile -t tracii . && docker run -p 8000:8000 --env-file .env tracii`.
+
+Split hosting is still supported: UI on Vercel (`vercel.json`, set `window.TRACII_API` in `frontend/config.js`), API with
+`SERVE_FRONTEND=0` and `ALLOWED_ORIGINS=https://<your-ui>`. Free Render instances sleep when idle; open the URL a minute before a demo.
+
+Public-server limits: `RATE_LIMIT_PER_MIN` (POSTs per client IP, default 30), `MAX_STORED_SCANS` (in-memory history, default 100),
+`DEEP_SCAN_LIMIT`. Scans are kept in memory only and are lost on restart.
 
 ## Safety rules the code enforces
 Never runs package lifecycle scripts · verifies tarball integrity and rejects links/traversal · keeps vulnerability
 and malware categories separate · every AI claim must cite an evidence ID or it is discarded · package text is
-treated as data, not instructions · fixes are proposed, never applied to your repo · "verified" only after a real rescan or model call.
+treated as data, not instructions · fixes are proposed, never applied to your repo · "verified" only after a real rescan or model call ·
+fix simulation refuses URL / git / `file:` / `link:` specs, workspaces and lockfile entries outside registry.npmjs.org (so a crafted
+`package.json` cannot make the server fetch internal URLs or read local paths) · GitHub intake only accepts `https://github.com/<owner>/<repo>` and fetches two files by commit SHA.
 
 ## Credits
 Started from an audit of [drPod/chainviz](https://github.com/drPod/chainviz) (MIT). See `docs/CHAINVIZ_AUDIT.md`

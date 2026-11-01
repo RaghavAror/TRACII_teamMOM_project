@@ -3,6 +3,9 @@
 Checked against https://dev.meta.ai/docs (models, structured output, voice, SAM and images pages) on 27 Oct 2026.
 Live status measured with `scripts/check_models.py` on 29 Oct 2026; see `results/model_checks.json`.
 Base URL `https://api.meta.ai/v1`, header `Authorization: Bearer $META_API_KEY`.
+In the running app, **Model intelligence → Run live check** (`POST /api/models/check`, cached 60 s, never calls Muse Image)
+sends the same minimal requests as `scripts/check_models.py`; `GET /api/models/status` then reports per model
+`not_configured` · `configured` (no call yet) · `verified` (last call succeeded) · `failed` (last call failed, with the error).
 
 | Model | ID | Tracii feature | Endpoint used | Code | Status |
 |---|---|---|---|---|---|

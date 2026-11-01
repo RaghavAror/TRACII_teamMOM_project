@@ -5,12 +5,15 @@ from __future__ import annotations
 import base64
 import json
 import os
+import threading
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -41,6 +44,30 @@ app.add_middleware(
     allow_origins=[o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")],
     allow_methods=["GET", "POST"], allow_headers=["Content-Type"],
 )
+
+# Every POST starts paid or slow work (scans, npm resolution, model calls): per-client sliding window.
+# RATE_LIMIT_PER_MIN=0 disables it. Behind a proxy, run uvicorn with --proxy-headers so the client IP is real.
+_HITS: dict[str, deque] = defaultdict(deque)
+_HITS_LOCK = threading.Lock()
+
+
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+    limit = int(os.environ.get("RATE_LIMIT_PER_MIN", "30"))
+    if limit > 0 and request.method == "POST":
+        key, now = (request.client.host if request.client else "?"), time.monotonic()
+        with _HITS_LOCK:
+            q = _HITS[key]
+            while q and now - q[0] > 60:
+                q.popleft()
+            if len(q) >= limit:
+                return JSONResponse({"detail": "Too many requests: please wait a minute and try again."},
+                                    status_code=429, headers={"Retry-After": "60"})
+            q.append(now)
+            if len(_HITS) > 10_000:   # bound memory: forget idle clients
+                for k in [k for k, v in _HITS.items() if not v or now - v[-1] > 60]:
+                    del _HITS[k]
+    return await call_next(request)
 
 
 # ---------- helpers ----------
@@ -93,12 +120,27 @@ class FixtureScan(BaseModel):
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True}
+    return {"ok": True, "version": app.version}
 
 
 @app.get("/api/models/status")
 def model_status() -> list[dict]:
     return models.status()
+
+
+_LAST_CHECK: dict = {"at": 0.0, "results": []}
+_CHECK_LOCK = threading.Lock()
+
+
+@app.post("/api/models/check")
+def model_check() -> dict:
+    """Send a minimal real request to each configured model; result cached 60 s (calls are billed)."""
+    with _CHECK_LOCK:
+        cached = time.time() - _LAST_CHECK["at"] < 60
+        if not cached:
+            _LAST_CHECK.update(at=time.time(), results=models.live_check())
+    return {"checked_at": _LAST_CHECK["at"], "cached": cached, "results": _LAST_CHECK["results"],
+            "status": models.status()}
 
 
 @app.post("/api/scan/github")

@@ -24,6 +24,17 @@ RETRY_STATUS = {429, 500, 502, 503, 504}
 # model id -> unix time of last successful call in this process. Used only for
 # the status page; a model is "verified" only after a real call succeeded.
 VERIFIED: dict[str, float] = {}
+# model id -> (unix time, short error) of the last failed call in this process; cleared on success.
+FAILED: dict[str, tuple[float, str]] = {}
+
+
+def _ok(model: str) -> None:
+    VERIFIED[model] = time.time()
+    FAILED.pop(model, None)
+
+
+def _fail(model: str, exc: Exception) -> None:
+    FAILED[model] = (time.time(), str(exc)[:200])
 
 
 class ModelUnavailable(RuntimeError):
@@ -83,7 +94,11 @@ class OpenAICompatClient:
             body["reasoning_effort"] = reasoning_effort
         if max_tokens:
             body["max_tokens"] = max_tokens
-        resp = self._post("/chat/completions", json=body)
+        try:
+            resp = self._post("/chat/completions", json=body)
+        except ModelUnavailable as exc:
+            _fail(model, exc)
+            raise
         try:
             choice = resp.json()["choices"][0]
             content = choice["message"]["content"]
@@ -92,11 +107,16 @@ class OpenAICompatClient:
                 raise ModelUnavailable(f"model returned no answer (finish_reason={choice.get('finish_reason')}, "
                                        f"reasoning chars={len(choice['message'].get('reasoning_content') or '')})")
             parsed = json.loads(content) if isinstance(content, str) else content
+        except ModelUnavailable as exc:
+            _fail(model, exc)
+            raise
         except (KeyError, IndexError, TypeError, ValueError) as exc:
+            _fail(model, exc)
             raise ModelUnavailable(f"unparseable model output: {exc}") from exc
         if not isinstance(parsed, dict):
+            _fail(model, ValueError("not a JSON object"))
             raise ModelUnavailable("model output is not a JSON object")
-        VERIFIED[model] = time.time()
+        _ok(model)
         return parsed
 
 
@@ -110,22 +130,30 @@ class MetaClient(OpenAICompatClient):
         if len(wav) > 32 * 1024 * 1024:
             raise ValueError("audio exceeds 32 MB")
         request = json.dumps({"model": model, "audioEncoding": "WAV", "mode": "PUSH_TO_TALK"})
-        resp = self._post("/asr/transcribe",
-                          files={"request": (None, request, "application/json"),
-                                 "audio": ("question.wav", wav, "audio/wav")},
-                          headers={"Accept": "application/json"})
+        try:
+            resp = self._post("/asr/transcribe",
+                              files={"request": (None, request, "application/json"),
+                                     "audio": ("question.wav", wav, "audio/wav")},
+                              headers={"Accept": "application/json"})
+        except ModelUnavailable as exc:
+            _fail(model, exc)
+            raise
         text = resp.json().get("transcript", "")
-        VERIFIED[model] = time.time()
+        _ok(model)
         return text
 
     def generate_image(self, prompt: str, model: str = "muse-image-1.0") -> str:
-        resp = self._post("/images/generations",
-                          json={"model": model, "prompt": prompt, "n": 1, "response_format": "b64_json",
-                                "output_format": "png", "size": "1536x1024"})
-        data = resp.json().get("data") or []
-        if not data or not data[0].get("b64_json"):
-            raise ModelUnavailable("no image returned")
-        VERIFIED[model] = time.time()
+        try:
+            resp = self._post("/images/generations",
+                              json={"model": model, "prompt": prompt, "n": 1, "response_format": "b64_json",
+                                    "output_format": "png", "size": "1536x1024"})
+            data = resp.json().get("data") or []
+            if not data or not data[0].get("b64_json"):
+                raise ModelUnavailable("no image returned")
+        except ModelUnavailable as exc:
+            _fail(model, exc)
+            raise
+        _ok(model)
         return data[0]["b64_json"]
 
     def segment(self, image_data_url: str, prompt: str, model: str = "sam-3.1") -> str:
@@ -134,9 +162,13 @@ class MetaClient(OpenAICompatClient):
                 "input": [{"role": "user", "content": [
                     {"type": "input_text", "text": prompt},
                     {"type": "input_image", "image_url": image_data_url}]}]}
-        resp = self._post("/responses", json=body)
+        try:
+            resp = self._post("/responses", json=body)
+        except ModelUnavailable as exc:
+            _fail(model, exc)
+            raise
         data = resp.json()
         texts = [c.get("text", "") for item in data.get("output") or [] for c in item.get("content") or []
                  if isinstance(c, dict)]
-        VERIFIED[model] = time.time()
+        _ok(model)
         return "\n".join(t for t in texts if t)

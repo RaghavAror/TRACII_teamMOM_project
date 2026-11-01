@@ -11,6 +11,12 @@ const CAT_LABEL = {
   repository_posture: "Repository posture",
   version_diff: "Version diff",
 };
+// Malicious-indicator findings come from two very different sources; never present a heuristic as confirmed malware.
+const isKnownMalware = (f) => f.category === "malicious_indicator" && /^MAL-/.test(f.rule_or_advisory);
+const TYPE_LABEL = (f) => f.category === "known_vulnerability" ? "Known vulnerability (advisory)"
+  : isKnownMalware(f) ? "Known malicious package (OSV MAL- record)"
+  : f.category === "malicious_indicator" ? "Suspicious behaviour (heuristic indicator, not confirmed malware)"
+  : CAT_LABEL[f.category];
 let scan = null;
 let activeCat = "known_vulnerability";
 
@@ -18,6 +24,10 @@ let activeCat = "known_vulnerability";
 document.querySelectorAll("#intake .tabs button").forEach((b) => b.addEventListener("click", () => {
   document.querySelectorAll("#intake .tabs button").forEach((x) => x.classList.toggle("active", x === b));
   document.querySelectorAll("#intake .tab-panel").forEach((p) => p.classList.toggle("hidden", p.id !== `form-${b.dataset.tab}`));
+}));
+
+document.querySelectorAll("[data-example]").forEach((b) => b.addEventListener("click", () => {
+  $("#form-github [name=url]").value = b.dataset.example;
 }));
 
 api("/api/fixtures").then((names) => names.forEach((n) => $("#fixture-select").append(h("option", { value: n }, n)))).catch(() => {});
@@ -38,24 +48,35 @@ $("#form-fixture").addEventListener("submit", (e) => {
 
 async function start(kickoff) {
   const prog = $("#progress");
+  const buttons = document.querySelectorAll("#intake button.primary");
   prog.classList.remove("hidden");
-  prog.replaceChildren(h("div", {}, "Starting scan…"));
+  prog.replaceChildren(h("div", { class: "step running" }, "Starting scan…"));
+  buttons.forEach((b) => { b.disabled = true; });
   try {
     const { scan_id } = await kickoff();
     await poll(scan_id);
   } catch (err) {
-    prog.replaceChildren(h("div", { class: "error" }, `Scan failed: ${err.message}`));
+    prog.append(h("div", { class: "error" }, `Scan failed: ${err.message}`));
+  } finally {
+    buttons.forEach((b) => { b.disabled = false; });
   }
 }
 
 async function poll(id) {
   const prog = $("#progress");
+  const t0 = Date.now();
   for (;;) {
     const s = await api(`/api/scans/${id}`);
-    prog.replaceChildren(...s.progress.map((p) => h("div", {}, "✓ " + p)));
+    const done = s.status !== "running";
+    prog.replaceChildren(...s.progress.map((p, i) =>
+      h("div", { class: `step ${!done && i === s.progress.length - 1 ? "running" : "ok"}` }, p)),
+      done ? null : h("div", { class: "muted" }, `${Math.round((Date.now() - t0) / 1000)} s · large lockfiles take up to a minute`));
     if (s.status === "done") {
       scan = s;
+      activeCat = s.result.findings.some(isKnownMalware) ? "malicious_indicator" : "known_vulnerability";
       render();
+      renderVerdict();
+      $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
       initGraph(scan, { onOpenFinding: openFinding });
       return;
     }
@@ -72,20 +93,29 @@ function render() {
   $("#source-line").textContent = `${src.kind}: ${src.label}` + (src.commit_sha ? ` @ ${src.ref} (${src.commit_sha})` : "") +
     ` · ${r.inventory.packages.length} packages · lockfile v${r.inventory.lockfile_version}`;
   const base = `${window.TRACII_API}/api/scans/${encodeURIComponent(r.scan_id)}`;
-  $("#exports").replaceChildren("Export: ",
-    h("a", { href: `${base}/sarif`, download: `tracii-${r.scan_id}.sarif` }, "SARIF (code scanning)"), " · ",
-    h("a", { href: `${base}/sbom`, download: `tracii-${r.scan_id}.cdx.json` }, "SBOM (CycloneDX)"));
+  $("#exports").replaceChildren(h("span", { class: "muted" }, "Export"),
+    h("a", { class: "btn", href: `${base}/sbom`, download: `tracii-${r.scan_id}.cdx.json`, title: "CycloneDX 1.5 JSON: every name@version with purl, hash, scope and the OSV advisories" }, "SBOM · CycloneDX"),
+    h("a", { class: "btn", href: `${base}/sarif`, download: `tracii-${r.scan_id}.sarif`, title: "SARIF 2.1.0 for GitHub code scanning; each result points at package-lock.json" }, "SARIF"),
+    h("button", { class: "btn", type: "button", onclick: downloadGateReport, title: "Markdown report from the CI gate policy (fail on high)" }, "CI gate report"));
   $("#checks").replaceChildren(...r.checks.map((c) =>
     h("li", { class: `check ${c.status}` }, h("b", {}, c.name), ` ${c.status}`, c.packages_checked ? ` · ${c.packages_checked} pkgs` : "", h("div", { class: "muted" }, c.detail))));
   $("#warnings").replaceChildren(...r.inventory.warnings.map((w) => h("div", { class: "warn" }, "⚠ " + w)));
 
-  const counts = scan.summary.by_category;
-  $("#summary").replaceChildren(...Object.keys(CAT_LABEL).map((cat) => {
-    const c = counts[cat] || {};
-    const total = Object.values(c).reduce((a, b) => a + b, 0);
-    return h("div", { class: "sum-card" }, h("div", { class: "sum-n" }, total), h("div", {}, CAT_LABEL[cat]),
+  const groups = [
+    ["Known malicious packages", "OSV MAL- records: reported malware. Remove.", "malicious_indicator", (f) => isKnownMalware(f), "mal"],
+    ["Known vulnerabilities", "OSV / GitHub advisories matching the installed version.", "known_vulnerability", (f) => f.category === "known_vulnerability", "vuln"],
+    ["Suspicious behaviour", "Heuristic indicators from code rules / GuardDog. Needs review; not confirmed malware.", "malicious_indicator", (f) => f.category === "malicious_indicator" && !isKnownMalware(f), "sus"],
+    ["Repository posture", "Hygiene signals. Never malware evidence.", "repository_posture", (f) => f.category === "repository_posture", "post"],
+  ];
+  $("#summary").replaceChildren(...groups.map(([label, help, cat, pred, cls]) => {
+    const list = r.findings.filter(pred);
+    const c = {};
+    list.forEach((f) => { c[f.severity] = (c[f.severity] || 0) + 1; });
+    return h("button", { class: `sum-card ${cls} ${list.length ? "has" : ""}`, type: "button", title: help,
+      onclick: () => { activeCat = cat; render(); $("#findings").scrollIntoView({ behavior: "smooth", block: "center" }); } },
+      h("div", { class: "sum-n" }, list.length), h("div", { class: "sum-l" }, label),
       h("div", { class: "sevs" }, SEV_ORDER.filter((s) => c[s]).map((s) => h("span", { class: `sev ${s}` }, `${c[s]} ${s}`))),
-      total === 0 ? h("div", { class: "muted" }, "no issue detected by these checks") : null);
+      h("div", { class: "muted" }, list.length ? help : "No issue detected by these checks."));
   }));
 
   $("#cat-tabs").replaceChildren(...Object.keys(CAT_LABEL).map((cat) =>
@@ -100,7 +130,7 @@ function renderTable() {
     .sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
   $("#findings tbody").replaceChildren(...(rows.length ? rows.map((f) => h("tr", { onclick: () => showDetail(f) },
     h("td", {}, h("span", { class: `sev ${f.severity}` }, f.severity)),
-    h("td", { class: "mono" }, `${f.package}@${f.version}`),
+    h("td", { class: "mono" }, `${f.package}@${f.version}`, isKnownMalware(f) ? h("span", { class: "tag malware" }, "known malware") : null),
     h("td", { class: "mono" }, f.rule_or_advisory),
     h("td", {}, f.source),
     h("td", { class: "muted" }, f.paths[0] ? (f.paths[0].dev_only ? "dev · " : "") + f.paths[0].direct_dependency : "—"),
@@ -141,16 +171,24 @@ function showDetail(f) {
   const agentBox = h("div", { class: "ai" });
   const mission = h("select", { title: "SSVC Mission & Well-being impact: how much harm a compromise of this app would do. Your call; Tracii cannot know it." },
     ["low", "medium", "high"].map((v) => h("option", { value: v, selected: v === "medium" }, `mission impact: ${v}`)));
+  const direct = f.paths.some((p) => p.nodes.length === 2);
   d.replaceChildren(
+    h("div", { class: `type-banner ${isKnownMalware(f) ? "mal" : f.category === "malicious_indicator" ? "sus" : "vuln"}` }, TYPE_LABEL(f)),
     h("h3", {}, f.title),
-    h("div", { class: "row" }, h("span", { class: `sev ${f.severity}` }, f.severity), h("span", { class: "tag" }, CAT_LABEL[f.category]),
-      h("span", { class: "tag" }, `confidence: ${f.confidence}`), h("span", { class: "tag" }, `source: ${f.source}`)),
+    h("div", { class: "row" }, h("span", { class: `sev ${f.severity}` }, f.severity),
+      h("span", { class: "tag" }, `confidence: ${f.confidence}`), h("span", { class: "tag" }, `source: ${f.source}`),
+      f.paths.length ? h("span", { class: "tag" }, direct ? "direct dependency" : "transitive dependency") : null,
+      f.paths.length && f.paths.every((p) => p.dev_only) ? h("span", { class: "tag" }, "dev only") : null),
     h("p", { class: "mono" }, `${f.package}@${f.version} · ${f.rule_or_advisory}`, f.aliases.length ? ` (${f.aliases.join(", ")})` : ""),
+    f.category === "known_vulnerability"
+      ? h("p", {}, h("b", {}, "Fixed in: "), f.fixed_versions.length ? f.fixed_versions.join(", ") : h("span", { class: "warn" }, "no fixed version published"))
+      : isKnownMalware(f) ? h("p", { class: "error" }, h("b", {}, "Action: "), "remove this version from your dependency tree. Only replace it with a version outside the affected range in the OSV record above, and treat any secrets on machines that installed it as exposed.") : null,
     h("h4", {}, "Evidence"), evidenceList(f),
     h("h4", {}, "Impact path"), pathView(f),
     h("button", { class: "ghost", onclick: (e) => { if (!focusPackage(`${f.package}@${f.version}`)) e.target.textContent = "Not drawn in the 3D view"; } }, "Show in 3D graph"),
     h("h4", {}, "Unknowns / limitations"), h("ul", {}, f.limitations.map((l) => h("li", { class: "muted" }, l))),
     h("h4", {}, "AI investigation"),
+    h("p", { class: "muted" }, "Model output is an assessment, not a finding. Every claim must cite the evidence IDs above; uncited claims are discarded and the scanner verdict is never changed."),
     h("div", { class: "row" },
       h("button", { onclick: () => explain(f, aiBox, false, false) }, "Explain with evidence"),
       h("button", { class: "ghost", onclick: () => explain(f, aiBox, true, false) }, "Deep investigation (Wonder)"),
@@ -302,12 +340,87 @@ $("#diff-form").addEventListener("submit", async (e) => {
   } catch (err) { out.textContent = err.message; }
 });
 
-// ---------- model status ----------
-$("#models-btn").addEventListener("click", async () => {
-  const rows = await api("/api/models/status");
-  $("#models-body").replaceChildren(h("h3", {}, "Model integrations"), h("table", {},
-    h("tr", {}, ["Role", "Model", "Feature", "Status"].map((x) => h("th", {}, x))),
-    rows.map((r) => h("tr", {}, h("td", {}, r.role), h("td", { class: "mono" }, r.model), h("td", {}, r.feature), h("td", {}, h("span", { class: `tag ${r.status}` }, r.status))))),
-    h("p", { class: "muted" }, "“verified” only appears after a real call succeeds in this server process."));
-  $("#models-dialog").showModal();
-});
+// ---------- verdict + gate report ----------
+async function renderVerdict() {
+  const r = scan.result;
+  const box = $("#verdict");
+  const mal = r.findings.filter(isKnownMalware);
+  const sus = r.findings.filter((f) => f.category === "malicious_indicator" && !isKnownMalware(f) && !["info", "low"].includes(f.severity));
+  const vulns = r.findings.filter((f) => f.category === "known_vulnerability");
+  const top = r.findings.filter((f) => f.severity !== "info").map((f) => f.severity).sort((a, b) => SEV_ORDER.indexOf(a) - SEV_ORDER.indexOf(b))[0] || "none";
+  const direct = r.inventory.packages.filter((p) => p.direct).length;
+  let gateOut = null;
+  try { gateOut = await api(`/api/scans/${encodeURIComponent(r.scan_id)}/gate`); } catch { /* shown as unknown */ }
+  const outcome = gateOut?.outcome || "unknown";
+  const level = mal.length ? "critical" : outcome === "fail" ? "fail" : outcome === "pass" ? "pass" : "warn";
+  const headline = mal.length ? `${mal.length} known malicious package${mal.length > 1 ? "s" : ""} in your dependency tree`
+    : outcome === "fail" ? `${gateOut.blocking.length} blocking finding${gateOut.blocking.length === 1 ? "" : "s"} at severity high or above`
+    : outcome === "pass" ? "No blocking findings from these checks" : "Scan incomplete: some checks could not run";
+  box.className = `verdict card v-${level}`;
+  box.replaceChildren(
+    h("div", { class: "v-main" },
+      h("div", { class: "v-kicker" }, `CI gate (fail on high): ${outcome.toUpperCase()}`),
+      h("div", { class: "v-head" }, headline),
+      h("div", { class: "muted" }, `${r.source.kind === "fixture" ? "Demo project" : r.source.kind}: ${r.source.label} · highest severity: ${top} · deterministic scanner verdict, no AI involved`)),
+    h("div", { class: "v-stats" },
+      stat(mal.length, "known malware", "mal"), stat(vulns.length, "vulnerabilities", "vuln"), stat(sus.length, "suspicious (medium+)", "sus"),
+      stat(r.inventory.packages.length, `packages · ${direct} direct`, "")));
+}
+const stat = (n, label, cls) => h("div", { class: `v-stat ${cls}` }, h("b", {}, n), h("span", {}, label));
+
+async function downloadGateReport() {
+  try {
+    const g = await api(`/api/scans/${encodeURIComponent(scan.scan_id)}/gate`);
+    const a = h("a", { href: URL.createObjectURL(new Blob([g.markdown], { type: "text/markdown" })), download: `tracii-${scan.scan_id}-gate.md` });
+    document.body.append(a); a.click(); a.remove();
+  } catch (err) { alert(`Gate report failed: ${err.message}`); }
+}
+
+// ---------- model intelligence ----------
+const STATUS_TEXT = { verified: "connected", failed: "failed", configured: "configured · not yet called", not_configured: "not configured" };
+const ROLE_NAME = { investigator: "Muse Spark", deep: "Muse Wonder", image: "Muse Image", voice: "Muse Voice Transcribe", segment: "SAM 3.1",
+  independent_glimmer: "Muse Glimmer", independent_spark_open: "Muse Spark Open", dev_agent: "Muse Code" };
+
+function modelRows(rows, checks = []) {
+  const byRole = Object.fromEntries(checks.map((c) => [c.role, c]));
+  return h("div", { class: "models" }, rows.map((r) => {
+    const c = byRole[r.role];
+    const st = r.role === "dev_agent" ? "dev" : r.status;
+    return h("div", { class: `model m-${st}` },
+      h("div", { class: "row" }, h("b", {}, ROLE_NAME[r.role] || r.role), h("span", { class: "mono muted" }, r.model),
+        h("span", { class: `tag ${st}` }, r.role === "dev_agent" ? "development-time only" : STATUS_TEXT[r.status] || r.status),
+        c?.ok ? h("span", { class: "muted" }, `${c.latency_s}s`) : null),
+      h("div", { class: "muted" }, r.feature),
+      r.note ? h("div", { class: "muted" }, r.note) : null,
+      r.error ? h("div", { class: "error" }, r.error) : null);
+  }));
+}
+
+async function showModels(checkResult) {
+  const body = $("#models-body");
+  let rows;
+  try { rows = checkResult?.status || await api("/api/models/status"); }
+  catch (err) { body.replaceChildren(h("p", { class: "error" }, err.message)); return; }
+  updateDot(rows);
+  const btn = h("button", { onclick: async () => {
+    btn.disabled = true; btn.textContent = "Checking… (one minimal request per model)";
+    try { showModels(await post("/api/models/check")); } catch (err) { btn.textContent = err.message; }
+  } }, "Run live check");
+  body.replaceChildren(
+    h("h3", {}, "Model intelligence"),
+    h("p", { class: "muted" }, "Scanners decide; models explain. Each model only sees the scanner's evidence and must cite it. Without credentials every AI feature falls back to a deterministic summary."),
+    modelRows(rows, checkResult?.results),
+    h("div", { class: "row" }, btn,
+      checkResult ? h("span", { class: "muted" }, `${checkResult.results.length ? "Checked" : "Nothing to check: no model credentials on this server"}${checkResult.cached ? " (cached, < 60 s old)" : ""}`) : null),
+    h("p", { class: "muted" }, "“connected” means a real call succeeded in this server process; “failed” shows the last error. Muse Image is off unless enabled (illustration only, never evidence). Muse Code was used by the team during development, not at runtime."));
+}
+function updateDot(rows) {
+  const meta = rows.filter((r) => ["investigator", "deep"].includes(r.role));
+  const cls = meta.some((r) => r.status === "failed") ? "failed" : meta.some((r) => r.status === "verified") ? "verified"
+    : meta.some((r) => r.status === "configured") ? "configured" : "not_configured";
+  $("#models-dot").className = `dot ${cls}`;
+  $("#models-dot").title = `Meta models: ${STATUS_TEXT[cls]}`;
+}
+api("/api/models/status").then(updateDot).catch(() => {});
+
+$("#models-btn").addEventListener("click", () => { showModels(); $("#models-dialog").showModal(); });

@@ -5,10 +5,28 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: .
     healthCheckPath: /api/health
+    plan: free
     envVars:
+      - key: SERVE_FRONTEND
+        value: "1"
+      - key: RATE_LIMIT_PER_MIN
+        value: "30"
       - key: META_API_KEY
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
       - key: GITHUB_TOKEN
+        sync: false
+      # optional open-weight reviewers (see .env.example)
+      - key: SPARK_OPEN_BASE_URL
+        sync: false
+      - key: SPARK_OPEN_MODEL
+        sync: false
+      - key: SPARK_OPEN_API_KEY
+        sync: false
+      - key: GLIMMER_BASE_URL
+        sync: false
+      - key: GLIMMER_MODEL
+        sync: false
+      - key: GLIMMER_API_KEY
         sync: false
