@@ -72,6 +72,58 @@ The SBOM lists one component per name@version, with a purl, the SHA-512 from the
 are `excluded`) and the resolved dependency graph. Only OSV advisories go into its `vulnerabilities`; malicious-behaviour
 signals are detector output, not advisories, so they stay out of it.
 
+## Evaluation (malicious-package detection)
+
+Measured on labelled npm packages: malware from [DataDog's malicious-software-packages-dataset](https://github.com/DataDog/malicious-software-packages-dataset)
+(Apache-2.0, commit `3fc8a1f`), benign packages from the npm registry. Started from the chainviz-v2 dataset
+(345 packages). Nothing is trained: the detectors are hand-written rules plus the OSV lookup. Each score below
+comes from data **locked before that round of rule changes and run once**. "Flagged" means a malicious-behaviour finding with severity
+medium or higher.
+
+| Held-out set (run once) | Rules | Malware caught: code rules | + OSV known-malware list | False alarms (benign) |
+|---|---|---|---|---|
+| chainviz test split (33 malware / 105 benign) | round 1 | 19/33 (58%) | 31/33 (94%) | 3/105 (2.9%) |
+| fresh set 1 (58 / 100) | round 2 | 36/58 (62%) | 52/58 (90%) | 5/100 (5.0%) |
+| **fresh set 2 (60 / 98), current rules** | **round 3** | **37/60 (62%)**, 66% of samples that contain code | **53/60 (88%)** | **2/98 (2.0%)** |
+
+On fresh set 2: 0/40 false alarms on popular packages, 0/20 on older (2023–24) releases of popular packages, 0/18 on
+packages with install scripts. The OSV list itself raised no false alarms on any benign package.
+
+**How to read it**
+- **New malware:** the code rules (about 60%) are the relevant number. **Known malware:** the OSV list adds most
+  of the rest. It only knows what has already been reported, and these samples were all reported, which flatters it.
+- Sample sizes are small. The 95% ranges are about ±12 points for detection and 1–7% for false alarms. Don't quote decimals.
+- Some "malicious" samples have no code to analyse: a bare `package.json` or a `console.log` placeholder,
+  labelled for who published them. They count as misses. The table gives the rate on samples that contain code separately.
+- Most remaining misses run their payload when the package is loaded rather than at install time. Recent
+  false alarms come from the data-theft rule (`vitest`, `ssh2`, an SDK that sends its own API key to its API).
+- Labels are DataDog's and were not independently verified. Benign packages skew newer than the malware.
+  Packages over 25 MB were skipped. GuardDog was not run on the malware, because it needs an on-disk copy.
+
+**What the rules check** ([static_rules.py](backend/tracii/detect/static_rules.py)), as text, without running anything:
+- Install commands that carry the payload: `curl … $(whoami)`, inline `node -e`.
+- Install-time files that use the network or child processes. These are lowered for native-addon builds
+  (`binding.gyp`) and known download hosts, and raised for raw IPs and capture services such as `*.oastify.com` or
+  `webhook.site`.
+- Data-theft chains: system info, secrets or sensitive files sent over the network.
+- Shell commands passed to `child_process`, and code that runs `npm publish`.
+- javascript-obfuscator-style code.
+- Large bundles (over 1 MB), read when an install script runs them.
+
+OSV `MAL-` records are reported as **known malicious packages** (critical, "remove it"), not as vulnerabilities.
+
+**Reproduce** (malware is downloaded as DataDog's encrypted zips and only ever read in memory; never extract, install or
+run the samples, and keep `datasets/` out of git):
+
+```bash
+.venv/bin/python scripts/fetch_datadog_samples.py --labels datasets/chainviz-dataset/labels.csv --ref 3fc8a1ff23fadb612234526e31a60e24bbc0bb3e
+.venv/bin/python scripts/evaluate_dataset.py --labels datasets/chainviz-dataset/labels.csv --malicious-root datasets/cache/datadog --osv
+.venv/bin/python scripts/build_fresh_testset.py --existing <labels.csv …> --dd-paths … --dd-manifest … --out datasets/fresh3/labels.csv --seed <new>
+```
+
+The holdouts above are used up. Measure the next round of rule changes on a new set built with a new seed, and
+run it only after the rules are frozen (`--split … --final`).
+
 ## Layout
 
 ```
@@ -88,6 +140,7 @@ backend/tracii/
   replay/      scenarios.json (4 sourced incidents) + replay logic on the user's graph
   fix/         remediation.py (proposal → --package-lock-only --ignore-scripts → compare)
   export/      sarif.py (SARIF 2.1.0 for code scanning), sbom.py (CycloneDX 1.5 JSON)
+  eval/        dataset.py (labelled-dataset loader: npm tarballs + encrypted DataDog zips, read in memory)
   gate.py      CI pass/fail policy (enforce | observe, severity threshold, incomplete-scan rule) + markdown report
   cli.py       `python -m tracii scan | sbom` (used by action.yml)
   api/main.py  FastAPI routes (+ serves frontend/ in dev)
@@ -111,5 +164,7 @@ Started from an audit of [drPod/chainviz](https://github.com/drPod/chainviz) (MI
 for what was kept. Uses [OSV-Scanner](https://github.com/google/osv-scanner) and [GuardDog](https://github.com/DataDog/guarddog) (both Apache-2.0).
 3D view: [3d-force-graph](https://github.com/vasturiano/3d-force-graph) (MIT), loaded from jsDelivr, not vendored.
 SSVC decision table from [CERTCC/SSVC](https://github.com/CERTCC/SSVC) (`backend/tracii/ai/ssvc_cisa.csv` records the commit).
+Evaluation data: malicious samples from [DataDog/malicious-software-packages-dataset](https://github.com/DataDog/malicious-software-packages-dataset)
+(Apache-2.0), labels started from the chainviz-v2 dataset; benign packages keep their own licences.
 Threat intel: [FIRST EPSS](https://www.first.org/epss/), [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog),
 [OpenSSF Scorecard](https://scorecard.dev), [MITRE ATT&CK](https://attack.mitre.org). None of these needs an API key.
