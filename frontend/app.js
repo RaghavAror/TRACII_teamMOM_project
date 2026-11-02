@@ -376,11 +376,23 @@ $("#diff-form").addEventListener("submit", async (e) => {
   try {
     const r = await post("/api/diff", f);
     const kv = (label, v) => h("div", {}, h("b", {}, label + ": "), Array.isArray(v) ? (v.join(", ") || "none") : (Object.keys(v).length ? JSON.stringify(v) : "none"));
+    const list = (v, n = 40) => v.length > n ? [...v.slice(0, n), `… +${v.length - n} more`] : v;
+    const flagged = Object.entries(r.code_changes || {}).filter(([, c]) => c.new_capabilities.length || c.injected_long_line || c.obfuscator_ids_added);
     out.replaceChildren(
+      h("p", { class: r.security_relevant ? "warn" : "muted" }, r.security_relevant
+        ? `${r.findings.length} security-relevant change${r.findings.length === 1 ? "" : "s"} between ${r.old_version} and ${r.new_version}.`
+        : `No security-relevant changes found between ${r.old_version} and ${r.new_version}`
+          + ` (${r.files_modified.length} file${r.files_modified.length === 1 ? "" : "s"} modified, ${r.files_added.length} added, ${r.files_removed.length} removed).`),
       h("p", { class: "muted" }, r.note),
       kv("Install scripts added/changed", r.install_scripts_added_or_changed), kv("Hosts added", r.hosts_added),
       kv("Capabilities added", Object.keys(r.capabilities_added)), kv("Dependencies added", r.dependencies_added),
-      kv("Files added", r.files_added.slice(0, 40)),
+      kv("Dependencies removed", r.dependencies_removed),
+      kv("Files modified", list(r.files_modified || [])),
+      kv("Files added", list(r.files_added)), kv("Files removed", list(r.files_removed)),
+      flagged.length ? kv("Code added with new behaviour", flagged.map(([p, c]) =>
+        `${p} (+${c.lines_added} lines${c.new_capabilities.length ? "; new: " + c.new_capabilities.join(", ") : ""}`
+        + `${c.injected_long_line ? `; ${c.injected_long_line.length}-char line at ${c.injected_long_line.line}` : ""}`
+        + `${c.obfuscator_ids_added ? `; ${c.obfuscator_ids_added} obfuscator ids` : ""})`)) : null,
       h("ul", {}, r.findings.map((x) => h("li", {}, h("span", { class: `sev ${x.severity}` }, x.severity), " ", x.title,
         h("ul", {}, x.evidence.map((ev) => h("li", { class: "mono muted" }, `${ev.summary}${ev.file ? " " + ev.file + (ev.line ? ":" + ev.line : "") : ""}`)))))));
   } catch (err) { out.textContent = err.message; }

