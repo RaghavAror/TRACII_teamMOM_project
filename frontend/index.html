@@ -11,118 +11,163 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
-<header class="top">
-  <a class="brand" href="#"><span class="logo" aria-hidden="true">T</span>TRACII</a>
-  <nav class="nav">
-    <a href="#intake">Scan</a>
-    <a href="#guide" class="open-guide">Guide</a>
-    <button id="models-btn" class="ghost sm"><span id="models-dot" class="dot"></span>Model intelligence</button>
+<div class="app">
+<aside class="sidebar" aria-label="Main navigation">
+  <a class="brand" href="#/scan" data-view="scan"><span class="logo" aria-hidden="true">T</span>TRACII</a>
+  <nav class="side-nav">
+    <a href="#/scan" data-view="scan"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New scan</a>
+    <p class="side-label">This scan</p>
+    <a href="#/overview" data-view="overview" class="needs-scan"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>Overview<span class="badge" id="nav-gate"></span></a>
+    <a href="#/findings" data-view="findings" class="needs-scan"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>Findings<span class="badge" id="nav-findings"></span></a>
+    <a href="#/graph" data-view="graph" class="needs-scan"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="8" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7l7.5 1M7.5 8l3.5 8M16.5 10l-3.5 6"/></svg>Impact map</a>
+    <a href="#/reports" data-view="reports" class="needs-scan"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>CI gate &amp; reports</a>
+    <a href="#/details" data-view="details" class="needs-scan"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4 4 10-10"/></svg>Scan details</a>
+    <a href="#/ask" data-view="ask" class="needs-scan"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18l-1 3 4-1.5A8 8 0 1 0 5 18z"/><path d="M10 10a2 2 0 1 1 3 1.7c-.6.4-1 .8-1 1.3M12 16h.01"/></svg>Ask AI</a>
+    <p class="side-label">Tools</p>
+    <a href="#/diff" data-view="diff"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v12M4 13l3 3 3-3M17 20V8M14 11l3-3 3 3"/></svg>Version diff</a>
   </nav>
-</header>
+  <div class="side-foot">
+    <div id="side-scan" class="side-scan muted">No scan yet</div>
+    <button type="button" class="side-btn open-guide">Guide</button>
+    <button type="button" id="models-btn" class="side-btn"><span id="models-dot" class="dot"></span>Model status</button>
+  </div>
+</aside>
 
-<main>
-  <section class="hero">
-    <p class="eyebrow">Application &amp; software supply-chain security</p>
-    <h1>See how every risky dependency <span class="grad">reaches your app</span></h1>
-    <p class="lede">Traditional tools list vulnerable packages. TRACII <b>investigates</b> them: the path each one takes into your
-      app, the evidence behind it, what to change, and a rescan that proves the fix worked. Package code is read, <b>never installed or run</b>;
-      Meta Muse models explain the scanner's evidence and never overrule it.</p>
+<div class="content">
+  <header class="topbar">
+    <div><h1 id="view-title">New scan</h1><div id="source-line" class="mono muted"></div></div>
+    <details class="menu hidden" id="export-menu">
+      <summary class="btn primary-btn">Export <span class="chev" aria-hidden="true"></span></summary>
+      <div class="menu-list" id="exports"></div>
+    </details>
+  </header>
+
+  <main>
+  <!-- ===== New scan ===== -->
+  <section class="view" data-view="scan" id="view-scan">
+    <div class="hero">
+      <h2 class="hero-h">See how every risky dependency <span class="grad">reaches your app</span></h2>
+      <p class="lede">TRACII checks an npm project for known vulnerabilities, known malware and suspicious install-time behaviour,
+        shows the path each one takes into your app, and proposes a fix you can verify. Package code is read, <b>never installed or run</b>.</p>
+    </div>
+    <section id="intake" class="card intake">
+      <div class="intake-head">
+        <div>
+          <h2>Start an investigation</h2>
+          <button type="button" class="guide-link open-guide">New here? Read the 2-minute guide →</button>
+        </div>
+        <div class="tabs seg" role="tablist">
+          <button data-tab="fixture" class="active">Demo project</button>
+          <button data-tab="github">GitHub repo</button>
+          <button data-tab="upload">Upload lockfile</button>
+        </div>
+      </div>
+      <form id="form-fixture" class="tab-panel">
+        <select name="name" id="fixture-select" aria-label="demo project"></select>
+        <button class="primary">Scan demo</button>
+        <p class="hint"><b>vulnerable-demo</b>: 53 packages pinned to versions with public advisories. <b>clean-demo</b>: 3 packages with no
+          known advisories, to show TRACII reports nothing it cannot back with evidence. Both are scanned live; nothing is cached.</p>
+      </form>
+      <form id="form-github" class="tab-panel hidden">
+        <input name="url" placeholder="https://github.com/owner/repo  (or …/tree/branch)" required aria-label="GitHub repository URL">
+        <input name="subdir" placeholder="sub-directory (optional)" class="narrow" aria-label="sub-directory">
+        <button class="primary">Scan repository</button>
+        <p class="hint">Try: <button type="button" class="linklike" data-example="https://github.com/OWASP/NodeGoat">OWASP/NodeGoat</button> ·
+          <button type="button" class="linklike" data-example="https://github.com/snyk-labs/nodejs-goof">snyk-labs/nodejs-goof</button>.
+          Public repos only. Only package.json and package-lock.json are fetched, pinned to the resolved commit. Nothing is installed.</p>
+      </form>
+      <form id="form-upload" class="tab-panel hidden">
+        <label class="file">package.json <input type="file" name="package_json" accept=".json" required></label>
+        <label class="file">package-lock.json <input type="file" name="package_lock" accept=".json" required></label>
+        <button class="primary">Scan files</button>
+        <p class="hint">Upload <b>package.json</b> and <b>package-lock.json</b> from your project root (no lockfile? run
+          <span class="mono">npm install --package-lock-only --ignore-scripts</span>). Up to 20 MB each, kept in memory only.</p>
+      </form>
+      <div id="progress" class="progress hidden" aria-live="polite"></div>
+    </section>
     <ul class="caps">
-      <li><b>SCA</b> known vulnerabilities (OSV / GHSA)</li>
-      <li><b>Malware</b> OSV MAL- records + behaviour rules + GuardDog</li>
-      <li><b>Impact</b> direct &amp; transitive dependency paths</li>
+      <li><b>Vulnerabilities</b> OSV / GitHub advisories</li>
+      <li><b>Malware</b> known-malware list + behaviour rules + GuardDog</li>
+      <li><b>Impact</b> dependency paths into your app</li>
       <li><b>Fix</b> proposed change, verified by rescan</li>
-      <li><b>Export</b> CycloneDX SBOM · SARIF · CI gate</li>
+      <li><b>Export</b> SBOM · SARIF · PDF · CI gate</li>
     </ul>
   </section>
 
-  <section id="intake" class="card intake">
-    <div class="intake-head">
-      <div>
-        <h2>Start an investigation</h2>
-        <button type="button" class="guide-link open-guide">New here? Read the 2-minute guidebook →</button>
-      </div>
-      <div class="tabs seg" role="tablist">
-        <button data-tab="fixture" class="active">Demo project</button>
-        <button data-tab="github">GitHub repo</button>
-        <button data-tab="upload">Upload lockfile</button>
-      </div>
-    </div>
-    <form id="form-fixture" class="tab-panel">
-      <select name="name" id="fixture-select" aria-label="demo project"></select>
-      <button class="primary">Scan demo</button>
-      <p class="hint"><b>vulnerable-demo</b>: 53 packages pinned to versions with public advisories. <b>clean-demo</b>: 3 packages with no
-        known advisories, to show TRACII reports nothing it cannot back with evidence. Both are scanned live (OSV, rules, GuardDog); nothing is cached.</p>
-    </form>
-    <form id="form-github" class="tab-panel hidden">
-      <input name="url" placeholder="https://github.com/owner/repo  (or …/tree/branch)" required aria-label="GitHub repository URL">
-      <input name="subdir" placeholder="sub-directory (optional)" class="narrow" aria-label="sub-directory">
-      <button class="primary">Scan repository</button>
-      <p class="hint">Try: <button type="button" class="linklike" data-example="https://github.com/OWASP/NodeGoat">OWASP/NodeGoat</button> ·
-        <button type="button" class="linklike" data-example="https://github.com/snyk-labs/nodejs-goof">snyk-labs/nodejs-goof</button>.
-        Public repos only. Only package.json and package-lock.json are fetched, pinned to the resolved commit SHA. Nothing is installed.</p>
-    </form>
-    <form id="form-upload" class="tab-panel hidden">
-      <label class="file">package.json <input type="file" name="package_json" accept=".json" required></label>
-      <label class="file">package-lock.json <input type="file" name="package_lock" accept=".json" required></label>
-      <button class="primary">Scan files</button>
-      <p class="hint">Upload the two files from your project root: <b>package.json</b> (what you declared) and <b>package-lock.json</b>
-        (the exact versions installed; run <span class="mono">npm install --package-lock-only --ignore-scripts</span> if you have none).
-        Lockfile v1–v3, up to 20 MB each, parsed as data and kept in memory only.</p>
-    </form>
-    <div id="progress" class="progress hidden" aria-live="polite"></div>
-  </section>
-
-  <section id="results" class="hidden">
+  <div id="results" class="hidden">
+  <!-- ===== Overview ===== -->
+  <section class="view" data-view="overview" id="view-overview">
     <div id="verdict" class="verdict card"></div>
-    <div class="toolbar"><div id="source-line" class="mono"></div><div id="exports" class="exports"></div></div>
-
     <div class="card">
-      <h2>Findings by type <small>kept separate, never merged into one score</small></h2>
+      <h2>Findings by type <small>counted separately, never merged into one score</small></h2>
       <div id="summary" class="summary"></div>
     </div>
+  </section>
 
-    <div class="card" id="graph-card">
-      <h2>Dependency graph <small>3D · colour = scanner result · size = packages that depend on it</small></h2>
-      <div class="row graph-bar">
-        <label class="muted"><input type="checkbox" id="graph-flagged"> only paths to findings</label>
-        <button type="button" id="graph-focus" class="ghost sm">Focus highest-priority finding</button>
-        <span id="graph-stats" class="muted"></span>
-      </div>
-      <div class="graph-wrap">
-        <div id="graph3d"></div>
-        <aside id="graph-info"><p class="muted">Click a node to see its findings and every package above it. Drag to rotate, scroll to zoom.</p></aside>
-      </div>
-      <div class="legend">
-        <span><i style="background:var(--g-app);outline:1px solid var(--line)"></i>your app</span><span><i style="background:var(--crit)"></i>critical vuln</span>
-        <span><i style="background:var(--high)"></i>high</span><span><i style="background:var(--med)"></i>medium</span><span><i style="background:var(--low)"></i>low</span>
-        <span><i style="background:var(--g-known)"></i>known malware (OSV MAL-)</span><span><i style="background:var(--g-mal)"></i>suspicious behaviour (heuristic, low+)</span><span><i style="background:var(--g-clean)"></i>no finding</span>
-        <span><i style="background:var(--g-dev)"></i>dev only</span><span><i style="background:var(--g-target)"></i>replay target</span>
-        <span><i style="background:var(--g-ghost)"></i>injected (replay)</span><span><i style="background:var(--g-wave)"></i>exposed (replay)</span>
-      </div>
-      <h3>Attack replays</h3>
-      <p class="muted">Four real npm incidents, each step sourced. If your project uses the package, the replay runs on your real dependency path; otherwise it is a labelled simulation on your most depended-on package.</p>
-      <form id="replay-form" class="row">
-        <select id="replay-select"></select>
-        <button>Play replay</button>
-        <button type="button" id="replay-reset" class="ghost">Reset</button>
-      </form>
-      <div id="replay-out"></div>
-    </div>
-
+  <!-- ===== Findings ===== -->
+  <section class="view" data-view="findings" id="view-findings">
     <div class="grid">
       <div class="card">
-        <h2>Findings</h2>
         <div class="tabs" id="cat-tabs"></div>
         <input id="filter" placeholder="filter by package…" aria-label="filter findings by package">
-        <table id="findings"><thead><tr><th>Severity</th><th>Package</th><th>Rule / advisory</th><th>Source</th><th>Path</th></tr></thead><tbody></tbody></table>
+        <table id="findings"><thead><tr><th>Severity</th><th>Package</th><th>Advisory / rule</th><th>Reaches app via</th></tr></thead><tbody></tbody></table>
       </div>
-      <div class="card sticky" id="detail"><div class="empty"><p><b>Select a finding</b></p><p class="muted">Evidence, dependency path, fix and AI investigation appear here.</p></div></div>
+      <div class="card sticky" id="detail"><div class="empty"><p><b>Select a finding</b></p><p class="muted">What it is, how it reaches your app, the fix and an AI explanation appear here.</p></div></div>
     </div>
+  </section>
 
+  <!-- ===== Impact map (2D) + optional 3D graph ===== -->
+  <section class="view" data-view="graph" id="view-graph">
+    <div class="card" id="graph-card">
+      <div class="card-head">
+        <h2>How risky packages reach your app</h2>
+        <div class="tabs seg" role="tablist" id="graph-mode">
+          <button type="button" data-mode="map" class="active">Map</button>
+          <button type="button" data-mode="3d">Explore in 3D</button>
+        </div>
+      </div>
+      <div id="impact-map" class="impact-map"></div>
+      <div id="graph-3d-panel" class="hidden">
+        <div class="row graph-bar">
+          <span class="muted">Every package in your project. Colour = what the scanners found · size = how many packages depend on it</span>
+          <label class="muted"><input type="checkbox" id="graph-flagged"> only paths to findings</label>
+          <button type="button" id="graph-focus" class="ghost sm">Focus highest-priority finding</button>
+          <span id="graph-stats" class="muted"></span>
+        </div>
+        <div class="graph-wrap">
+          <div id="graph3d"></div>
+          <aside id="graph-info"><p class="muted">Click a node to see its findings and every package above it. Drag to rotate, scroll to zoom.</p></aside>
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--g-app);outline:1px solid var(--line)"></i>your app</span>
+          <span><i style="background:var(--g-known)"></i>known malware</span><span><i style="background:var(--g-mal)"></i>suspicious behaviour</span>
+          <span><i style="background:var(--crit)"></i>critical</span><span><i style="background:var(--high)"></i>high</span>
+          <span><i style="background:var(--med)"></i>medium</span><span><i style="background:var(--low)"></i>low</span>
+          <span><i style="background:var(--g-clean)"></i>no finding</span><span><i style="background:var(--g-dev)"></i>dev only</span>
+        </div>
+        <details class="replays">
+          <summary><b>Attack replays</b> <span class="muted">· replay a real npm incident on this graph</span></summary>
+          <p class="muted">Four real incidents, each step sourced. If your project uses the package, the replay runs on your real dependency path; otherwise it is a labelled simulation on your most depended-on package.</p>
+          <form id="replay-form" class="row">
+            <select id="replay-select"></select>
+            <button>Play replay</button>
+            <button type="button" id="replay-reset" class="ghost">Reset</button>
+          </form>
+          <div class="legend">
+            <span><i style="background:var(--g-target)"></i>replay target</span><span><i style="background:var(--g-ghost)"></i>injected</span>
+            <span><i style="background:var(--g-wave)"></i>exposed</span>
+          </div>
+          <div id="replay-out"></div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== CI gate & reports ===== -->
+  <section class="view" data-view="reports" id="view-reports">
     <div class="card" id="gate-card">
       <div class="card-head">
-        <h2>CI security gate <small>same policy code as the GitHub Action and <span class="mono">tracii scan</span>, applied to this scan</small></h2>
+        <h2>CI security gate <small>the same policy as the GitHub Action and <span class="mono">tracii scan</span></small></h2>
         <form id="gate-form" class="row">
           <label class="muted">fail on <select name="fail_on"><option>critical</option><option selected>high</option><option>medium</option><option>low</option><option>none</option></select></label>
           <label class="muted"><input type="checkbox" name="ignore_dev"> ignore dev-only</label>
@@ -131,10 +176,17 @@
       </div>
       <div id="gate-out"></div>
     </div>
+    <div class="card">
+      <h2>Reports <small>built from this scan; the PDF uses the gate threshold above</small></h2>
+      <div class="report-grid" id="report-links"></div>
+    </div>
+  </section>
 
+  <!-- ===== Scan details ===== -->
+  <section class="view" data-view="details" id="view-details">
     <div class="grid two">
       <div class="card">
-        <h2>What was checked <small>no findings from a check that did not run is not a pass</small></h2>
+        <h2>What was checked <small>a check that did not run is never a pass</small></h2>
         <ul id="checks" class="checks"></ul>
         <div id="warnings"></div>
       </div>
@@ -143,31 +195,41 @@
         <div id="licenses"></div>
       </div>
     </div>
+  </section>
 
+  <!-- ===== Ask AI ===== -->
+  <section class="view" data-view="ask" id="view-ask">
     <div class="card">
-      <h2>Ask about this scan <small>Muse Spark · answers cite finding IDs</small></h2>
+      <h2>Ask about this scan <small>answers cite the findings they are based on</small></h2>
       <form id="ask-form" class="row">
         <input name="q" placeholder="e.g. Which direct dependency should I upgrade first?" minlength="3" required>
         <button>Ask</button>
-        <button type="button" id="voice-btn" class="ghost">🎙 Hold to ask</button>
+        <button type="button" id="voice-btn" class="ghost" title="Hold to record a spoken question">🎙 Hold to ask</button>
       </form>
       <div id="answer"></div>
     </div>
   </section>
+  </div>
 
-  <section class="card">
-    <h2>Version-to-version security diff <small>what changed between two releases of one package</small></h2>
-    <form id="diff-form" class="row">
-      <input name="package" placeholder="package (e.g. node-ipc)" required>
-      <input name="old_version" placeholder="old version (e.g. 9.2.1)" required>
-      <input name="new_version" placeholder="new version (e.g. 10.1.0)" required>
-      <button>Compare</button>
-      <p class="hint">Both tarballs are fetched from npm, integrity-checked and read in memory, never installed. npm unpublishes confirmed
-        malware, so the historical malicious versions (e.g. event-stream 3.3.6) can no longer be compared.</p>
-    </form>
-    <div id="diff-out"></div>
+  <!-- ===== Tools: version diff ===== -->
+  <section class="view" data-view="diff" id="view-diff">
+    <div class="card">
+      <h2>Version-to-version security diff <small>what changed between two releases of one package</small></h2>
+      <form id="diff-form" class="row">
+        <input name="package" placeholder="package (e.g. node-ipc)" required>
+        <input name="old_version" placeholder="old version (e.g. 9.2.1)" required>
+        <input name="new_version" placeholder="new version (e.g. 10.1.0)" required>
+        <button>Compare</button>
+        <p class="hint">Both tarballs are fetched from npm, integrity-checked and read in memory, never installed. npm unpublishes confirmed
+          malware, so the historical malicious versions (e.g. event-stream 3.3.6) can no longer be compared.</p>
+      </form>
+      <div id="diff-out"></div>
+    </div>
   </section>
-</main>
+  </main>
+  <footer>Results say what these checks detected. “No issue detected” is not a guarantee that a package is safe. AI assessments are labelled and never change the scanner verdict.</footer>
+</div>
+</div>
 
 <dialog id="guide-dialog" class="guide" aria-labelledby="guide-title">
   <div class="guide-head">
@@ -251,6 +313,5 @@
   </section>
 </dialog>
 <dialog id="models-dialog"><div id="models-body"></div><form method="dialog" class="dialog-actions"><button class="ghost">Close</button></form></dialog>
-<footer>Results say what these checks detected. “No issue detected” is not a guarantee that a package is safe. AI assessments are labelled and never change the scanner verdict.</footer>
 </body>
 </html>

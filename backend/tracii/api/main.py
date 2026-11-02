@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response
 from typing import Literal
 
@@ -40,6 +41,8 @@ MAX_UPLOAD = 20 * 1024 * 1024
 MAX_MEDIA = 10 * 1024 * 1024
 
 app = FastAPI(title="Tracii", version="0.1.0")
+# Compress responses: the bundled 3D library is 1.4 MB uncompressed.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")],
