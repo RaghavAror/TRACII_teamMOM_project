@@ -19,8 +19,7 @@ from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import (KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table,
-                                TableStyle)
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from tracii.evidence.schema import Category, Finding, ScanResult
 from tracii.gate import GateResult
@@ -32,7 +31,6 @@ INK, MUTED, LINE, SOFT = colors.HexColor("#0b1220"), colors.HexColor("#5b6577"),
 ACCENT, ACCENT2 = colors.HexColor("#0866ff"), colors.HexColor("#7c3aed")
 SOURCE_LABEL = {"osv-api": "OSV.dev API", "osv-scanner": "OSV-Scanner", "guarddog": "GuardDog (DataDog)",
                 "tracii-static": "TRACII behaviour rules"}
-MAX_DETAILED = 60            # detailed write-ups; every finding is still listed in the appendix table
 _TRANSLATE = str.maketrans({"→": "->", "←": "<-", "—": "-", "–": "-", "‘": "'", "’": "'", "“": '"', "”": '"',
                             "…": "...", "≥": ">=", "≤": "<=", "•": "-", "·": "-", "✓": "v", "×": "x"})
 
@@ -78,26 +76,27 @@ def type_label(f: Finding) -> str:
     return f.category.value.replace("_", " ").capitalize()
 
 
-def recommended_action(f: Finding) -> str:
-    via = ", ".join(sorted({p.direct_dependency for p in f.paths}))
+def what(f: Finding) -> str:
+    """One line describing the finding: for malware and heuristics the evidence is the point, for advisories the title."""
+    if f.category == Category.MALICIOUS_INDICATOR and f.evidence:
+        return f.evidence[0].summary
+    return f.title
+
+
+def short_action(f: Finding) -> str:
+    """One line: what to do about this finding (the full reasoning stays in the app)."""
+    via = sorted({p.direct_dependency for p in f.paths})
     if is_known_malware(f):
-        return ("Remove this version from the dependency tree" + (f" (it arrives via {via})" if via else "") +
-                ". Only replace it with a version outside the affected range in the OSV record, and treat secrets "
-                "on machines that installed it as exposed.")
+        return "Remove this version" + (f" (arrives via {', '.join(via)})" if via else "") + "; treat secrets where it was installed as exposed."
     if f.category == Category.VULNERABILITY:
         if not f.fixed_versions:
-            return ("No fixed version is published. Check whether the app uses the affected functionality, "
-                    "consider replacing the package, and watch the advisory.")
+            return "No fix published: check whether the affected feature is used; consider replacing the package."
         if _direct(f):
-            return f"Upgrade {f.package} to {' or '.join(f.fixed_versions)} in package.json, then rescan to verify."
-        return (f"Upgrade the parent ({via or 'unknown'}) to a release that depends on {f.package} >= "
-                f"{f.fixed_versions[0]}, or add an npm override; then rescan to verify.")
+            return f"Upgrade to {f.fixed_versions[0]}."
+        return f"Upgrade {', '.join(via) or 'the parent'} to a release with {f.package} >= {f.fixed_versions[0]}, or add an npm override."
     if f.category == Category.MALICIOUS_INDICATOR:
-        if f.severity.value == "info":
-            return "Context only (e.g. an install script or a capability). No action unless other findings point here."
-        return ("Review the cited code before trusting this version; compare it with the previous release (version "
-                "diff) and pin to a version without the behaviour if it is unexplained.")
-    return "Review the cited evidence."
+        return "Review the cited code before trusting this version."
+    return "Review the evidence in TRACII."
 
 
 def _styles() -> dict[str, ParagraphStyle]:
@@ -115,7 +114,7 @@ def _styles() -> dict[str, ParagraphStyle]:
                              spaceAfter=4, textColor=INK, keepWithNext=1),
         "h2flow": ParagraphStyle("h2flow", parent=body, fontName="Helvetica-Bold", fontSize=10.5, leading=14,
                                  spaceBefore=8, spaceAfter=4, textColor=INK),   # above long tables: may sit at a page end
-        "title": ParagraphStyle("title", parent=body, fontName="Helvetica-Bold", fontSize=26, leading=31, textColor=INK),
+        "title": ParagraphStyle("title", parent=body, fontName="Helvetica-Bold", fontSize=19, leading=23, textColor=INK),
         "kicker": ParagraphStyle("kicker", parent=body, fontName="Helvetica-Bold", fontSize=8.5, leading=11,
                                  textColor=ACCENT),
     }
@@ -189,221 +188,122 @@ def build_pdf(result: ScanResult, gate_result: GateResult, ai_notes: dict[str, d
         canvas.restoreState()
 
     story: list = []
-
-    # 1. cover / overview
-    story += [Spacer(1, 22 * mm), P("TRACII - AI-NATIVE APPLICATION &amp; SOFTWARE SUPPLY-CHAIN SECURITY", "kicker"),
-              Spacer(1, 4), P("Supply-chain security assessment", "title"), Spacer(1, 10)]
-    story.append(_table([[P("<b>Project</b>", "cell"), P(_t(project), "cell")],
-                         [P("<b>Source</b>", "cell"), P(_t(f"{src.kind}" + (f", sub-directory {src.subdir}" if src.subdir else "")), "cell")],
-                         [P("<b>Scanned</b>", "cell"), P(_t(scanned), "cell")],
-                         [P("<b>Scan ID</b>", "cell"), P(_t(result.scan_id), "mono")],
-                         [P("<b>Report generated</b>", "cell"), P(f"{generated_at:%Y-%m-%d %H:%M:%S} UTC", "cell")],
-                         [P("<b>Lockfile</b>", "cell"), P(f"package-lock.json v{inv.lockfile_version} - {_t(inv.project_name)}", "cell")]]
-                        + ([[P("<b>Rescan of</b>", "cell"), P(_t(result.parent_scan_id), "mono")]] if result.parent_scan_id else []),
-                        [38 * mm, width - 38 * mm], header=False))
     outcome = gate_result.outcome.upper()
+    pol = gate_result.policy
+    gate_color = "#12805c" if gate_result.outcome == "pass" else "#d92d20" if gate_result.outcome == "fail" else "#c27803"
     verdict = (f"{len(mal)} known malicious package(s) in the dependency tree" if mal else
-               f"{len(gate_result.blocking)} blocking finding(s) at severity {gate_result.policy.fail_on} or above"
+               f"{len(gate_result.blocking)} blocking finding(s) at severity {pol.fail_on} or above"
                if gate_result.outcome == "fail" else
                "No blocking findings from the checks that ran" if gate_result.outcome == "pass" else
                "Scan incomplete: a required check did not run")
-    story += [Spacer(1, 10), P(f'<font color="{ "#12805c" if gate_result.outcome == "pass" else "#d92d20"}"><b>CI gate: {outcome}</b></font>'
-                               f" (fail on {gate_result.policy.fail_on}, exit code {gate_result.exit_code})", "h2"),
-              P(f"<b>{_t(verdict)}</b>. Deterministic scanner verdict; no AI involved."),
-              PageBreak()]
 
-    # 2. executive summary
-    story.append(P("1. Executive summary", "h1"))
-    story.append(P(f"TRACII analysed <b>{len(inv.packages)}</b> packages from the lockfile: <b>{direct}</b> direct and "
-                   f"<b>{len(inv.packages) - direct}</b> transitive (counted per lockfile entry), "
-                   f"{sum(1 for p in inv.packages if p.dev)} of them dev-only and "
-                   f"{sum(1 for p in inv.packages if p.has_install_script)} with install scripts. "
-                   "Finding types are kept separate and are never merged into one score."))
-    story.append(Spacer(1, 6))
-    head = ["Finding type"] + [s.capitalize() for s in SEV] + ["Total"]
-    rows = [head]
-    for label, group in (("Known malicious packages (OSV MAL-)", mal), ("Known vulnerabilities (advisories)", vulns),
-                         ("Suspicious behaviour (heuristic)", sus), ("Repository posture", posture), ("Version diff", other)):
-        if label == "Version diff" and not group:
-            continue
-        rows.append([P(label, "cell")] + [str(sum(1 for f in group if f.severity.value == s)) for s in SEV] + [str(len(group))])
-    story.append(_table(rows, [58 * mm] + [(width - 58 * mm) / 7] * 7))
+    def sev_counts(group: list[Finding]) -> str:
+        parts = [f"{sum(1 for f in group if f.severity.value == s)} {s}" for s in SEV if any(f.severity.value == s for f in group)]
+        return f"<b>{len(group)}</b>" + (f" ({', '.join(parts)})" if parts else "")
+
+    # 1. title + verdict (everything a reader needs is on the first page)
+    story += [Spacer(1, 4 * mm), P("TRACII SUPPLY-CHAIN SECURITY REPORT", "kicker"), Spacer(1, 2),
+              P(_t(project), "title"), Spacer(1, 4),
+              P(f"Scanned {_t(scanned)} - {len(inv.packages)} packages ({direct} direct) - lockfile v{inv.lockfile_version}"
+                f" - scan <font face='Courier'>{_t(result.scan_id)}</font>"
+                + (f" - rescan of <font face='Courier'>{_t(result.parent_scan_id)}</font>" if result.parent_scan_id else ""), "small"),
+              Spacer(1, 8)]
+    box = Table([[P(f'<font color="{gate_color}"><b>CI gate: {outcome}</b></font>  '
+                    f'<font color="#5b6577">fail on {_t(pol.fail_on)} - exit code {gate_result.exit_code}</font>', "h2")],
+                 [P(f"<b>{_t(verdict)}.</b> Deterministic scanner verdict; no AI involved.")],
+                 [P(f"Known malicious packages {sev_counts(mal)}  -  Known vulnerabilities {sev_counts(vulns)}  -  "
+                    f"Suspicious behaviour {sev_counts(sus)}" + (f"  -  Repository posture {sev_counts(posture)}" if posture else "")
+                    + (f"  -  Version diff {sev_counts(other)}" if other else ""), "cell")]],
+                colWidths=[width], hAlign="LEFT")
+    box.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), SOFT), ("LINEBEFORE", (0, 0), (0, -1), 4, colors.HexColor(gate_color)),
+                             ("LEFTPADDING", (0, 0), (-1, -1), 10), ("TOPPADDING", (0, 0), (-1, -1), 4),
+                             ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(box)
+
+    # 2. fix first
     if ranked:
-        story += [P("Look at these first", "h2"),
-                  P("Ordered by scanner facts only: known malware, severity, production path, direct dependency, fix available.", "small")]
-        story.append(_table([["#", "Package", "Finding", "Why first"]] + [
-            [str(i + 1), P(_t(f"{f.package}@{f.version}"), "mono"), P(_t(f.rule_or_advisory), "mono"),
-             P(_t(", ".join(x for x in ["known malware" if is_known_malware(f) else f.severity.value,
-                                        "dev only" if _dev_only(f) else "ships to production",
-                                        "direct" if _direct(f) else "transitive",
-                                        (f"fix: {f.fixed_versions[0]}" if f.fixed_versions else "no fix published")
-                                        if f.category == Category.VULNERABILITY else ""] if x)), "cell")]
-            for i, f in enumerate(ranked[:10])], [8 * mm, 48 * mm, 50 * mm, width - 106 * mm]))
+        story += [P("Fix first", "h1"),
+                  P("Ordered by scanner facts only: known malware, severity, ships to production, direct dependency, fix available.", "small"),
+                  _table([["#", "Package", "Issue", "What to do"]] + [
+                      [str(i + 1), P(_t(f"{f.package}@{f.version}"), "mono"),
+                       P(f"{_sev(f.severity.value)} {_t(f.rule_or_advisory)}<br/>{_t(what(f), 90)}", "cell"),
+                       P(_t(short_action(f)), "cell")]
+                      for i, f in enumerate(ranked[:5])], [7 * mm, 40 * mm, 62 * mm, width - 109 * mm])]
 
-    # 3. scan coverage
-    story.append(P("2. Scan coverage", "h1"))
-    story.append(P("Checks that did not run are listed as such. No findings from a check that did not run is not a pass."))
-    story.append(Spacer(1, 4))
-    story.append(_table([["Check", "Status", "Packages", "Detail"]] + [
-        [P(f"<b>{_t(c.name)}</b>", "cell"),
-         P(f'<font color="{"#12805c" if c.status == "ran" else "#c27803" if c.status in ("skipped", "not_configured") else "#d92d20"}">'
-           f"<b>{_t(c.status.replace('_', ' ').upper())}</b></font>", "cell"),
-         str(c.packages_checked or "-"), P(_t(c.detail, 300), "cell")] for c in result.checks],
-        [34 * mm, 26 * mm, 18 * mm, width - 78 * mm]))
-    story.append(P("Data sources: lockfile (inventory, licences, install-script flags); OSV.dev advisories incl. GitHub "
-                   "Security Advisories and OSV MAL- known-malware records; npm registry tarballs (integrity-verified, "
-                   "read in memory, never installed or run) for TRACII behaviour rules and GuardDog.", "small"))
-    for w in inv.warnings:
-        story.append(P(f"Inventory warning: {_t(w)}", "small"))
-
-    # 4. detailed findings
-    story += [PageBreak(), P("3. Detailed findings", "h1")]
-    detailed = ranked[:MAX_DETAILED]
-    if not ranked:
-        story.append(P("No findings above info level from the checks that ran."))
-    else:
-        story.append(P(f"{len(detailed)} of {len(ranked)} findings above info level, in priority order"
-                       + (f" (first {MAX_DETAILED}; every finding is listed in the appendix)" if len(ranked) > MAX_DETAILED else "")
-                       + ". Info-level context findings are listed in the appendix.", "small"))
-    for f in detailed:
-        paths = [" -> ".join(p.nodes) + (" (dev only)" if p.dev_only else "") for p in f.paths[:3]]
-        ev = [f"<b>[{_t(e.kind)}]</b> {_t(e.summary, 400)}" + (f" <font face='Courier'>{_t(e.file)}{':' + str(e.line) if e.line else ''}</font>" if e.file else "")
-              + (f" <font color='#0866ff'>{_t(e.url, 120)}</font>" if e.url else "") + f" <font color='#5b6577'>(evidence {_t(e.id)})</font>"
-              for e in f.evidence[:4]]
-        facts = [
-            [P("<b>Finding ID</b>", "cell"), P(_t(f.id), "mono"), P("<b>Severity</b>", "cell"), P(_sev(f.severity.value) + f" - confidence {f.confidence.value}", "cell")],
-            [P("<b>Package</b>", "cell"), P(_t(f"{f.package}@{f.version}"), "mono"), P("<b>Reference</b>", "cell"),
-             P(_t(f.rule_or_advisory + (f" ({', '.join(f.aliases)})" if f.aliases else "")), "mono")],
-            [P("<b>Type</b>", "cell"), P(_t(type_label(f)), "cell"), P("<b>Source</b>", "cell"), P(_t(SOURCE_LABEL.get(f.source, f.source)), "cell")],
-            [P("<b>Reaches app</b>", "cell"), P(_t(("directly" if _direct(f) else "transitively") + " via " + ", ".join(sorted({p.direct_dependency for p in f.paths}))
-                                                    + (" (dev only: not shipped)" if _dev_only(f) else "")) if f.paths else "path not recorded", "cell"),
-             P("<b>Fixed in</b>", "cell"), P(_t(", ".join(f.fixed_versions) or ("none published" if f.category == Category.VULNERABILITY else "n/a")), "cell")],
-        ]
-        block = [P(f"{_sev(f.severity.value)}&nbsp;&nbsp;<b>{_t(f.title, 160)}</b>", "h2"),
-                 _table(facts, [22 * mm, width / 2 - 22 * mm, 20 * mm, width / 2 - 20 * mm], header=False, zebra=False)]
-        if paths:
-            block.append(P("<b>Impact path:</b> " + "<br/>".join(f"<font face='Courier'>{_t(x, 300)}</font>" for x in paths), "cell"))
-        if ev:
-            block.append(P("<b>Evidence:</b><br/>" + "<br/>".join(ev), "cell"))
-        block.append(P(f"<b>Recommended action:</b> {_t(recommended_action(f))}", "cell"))
-        if f.limitations:
-            block.append(P("Limitations: " + _t(" ".join(f.limitations), 500), "small"))
-        story += [KeepTogether(block[:3]), *block[3:], Spacer(1, 6)]
-
-    # 5. dependency intelligence
-    story += [PageBreak(), P("4. Dependency intelligence", "h1"),
-              P("The interactive 3D dependency graph is not reproduced in this PDF; the dependency paths below come from the "
-                "same graph data. Open the scan in TRACII to explore it.", "small")]
-    exposed: dict[str, list[Finding]] = {}
+    # 3. where the risk comes from (impact map as a table)
+    via: dict[str, dict] = {}
     for f in ranked:
         for p in f.paths:
-            if not p.dev_only:
-                exposed.setdefault(p.direct_dependency, []).append(f)
-    if exposed:
-        story.append(P("Direct dependencies that bring in the most risk (production paths)", "h2"))
-        rows = [["Direct dependency", "Findings via it", "Worst", "Example finding"]]
-        for dep, fs in sorted(exposed.items(), key=lambda kv: (min(priority_key(f) for f in kv[1]), -len(kv[1])))[:15]:
-            uniq = {f.id: f for f in fs}
-            worst = min(uniq.values(), key=priority_key)
-            rows.append([P(_t(dep), "mono"), str(len(uniq)), P(_sev(worst.severity.value), "cell"),
-                         P(_t(f"{worst.package}@{worst.version} {worst.rule_or_advisory}"), "mono")])
-        story.append(_table(rows, [50 * mm, 26 * mm, 22 * mm, width - 98 * mm]))
-    story.append(P("Important dependency paths (highest-priority findings)", "h2"))
-    seen, rows = set(), [["Finding", "Path to the application"]]
-    for f in ranked:
-        for p in f.paths[:1]:
-            key = tuple(p.nodes)
-            if key in seen:
-                continue
-            seen.add(key)
-            rows.append([P(_t(f"{f.package}@{f.version}") + "<br/>" + _sev(f.severity.value), "mono"),
-                         P(_t(" -> ".join(p.nodes) + (" (dev only)" if p.dev_only else ""), 400), "mono")])
-        if len(rows) > 15:
-            break
-    story.append(_table(rows, [45 * mm, width - 45 * mm]) if len(rows) > 1 else P("No dependency paths to report."))
+            d = via.setdefault(p.direct_dependency, {"pkgs": set(), "worst": f, "dev": True})
+            d["pkgs"].add(f"{f.package}@{f.version}")
+            d["dev"] = d["dev"] and p.dev_only
+            if priority_key(f) < priority_key(d["worst"]):
+                d["worst"] = f
+    if via:
+        story += [P("Where the risk comes from", "h1"),
+                  P("Each direct dependency and the risky packages it brings in. Upgrading the dependency at the top of a chain can clear everything below it.", "small"),
+                  _table([["Direct dependency", "Risky packages via it", "Worst", "Ships"]] + [
+                      [P(_t(dep), "mono"), P(_t(", ".join(sorted(d["pkgs"])), 300), "mono"), P(_sev(d["worst"].severity.value), "cell"),
+                       "dev only" if d["dev"] else "production"]
+                      for dep, d in sorted(via.items(), key=lambda kv: (priority_key(kv[1]["worst"]), -len(kv[1]["pkgs"])))[:10]],
+                      [38 * mm, width - 90 * mm, 26 * mm, 26 * mm])]
 
-    # 6. AI investigation
-    story += [P("5. AI investigation", "h1"),
-              P("AI assessments explain the scanner's evidence. They are not findings, every claim must cite an evidence ID "
-                "(uncited claims are discarded), and they never change the deterministic scanner verdict.", "small")]
+    # 4. all findings, one row each, grouped by type
+    story.append(P("All findings", "h1"))
+    if not ranked:
+        story.append(P("No findings above info level from the checks that ran."))
+    for group in (mal, vulns, sus, posture, other):
+        rows = sorted((f for f in group if f.severity.value != "info"), key=priority_key)
+        if not rows:
+            continue
+        story.append(P(f"{_t(type_label(rows[0]))} - {len(rows)}", "h2" if len(rows) <= 25 else "h2flow"))
+        story.append(_table([["Severity", "Package", "Finding", "Fix or next step", "Via"]] + [
+            [P(_sev(f.severity.value), "cell"), P(_t(f"{f.package}@{f.version}"), "mono"),
+             P(f"<font face='Courier'>{_t(f.rule_or_advisory)}</font><br/><font color='#5b6577'>{_t(what(f), 90)}</font>", "cell"),
+             P(_t(short_action(f), 140), "cell"),
+             P(_t(", ".join(sorted({p.direct_dependency for p in f.paths})) or "-", 60) + (" (dev)" if _dev_only(f) else ""), "cell")]
+            for f in rows], [18 * mm, 36 * mm, 52 * mm, width - 134 * mm, 28 * mm]))
+    info = [f for f in findings if f.severity.value == "info"]
+    if info:
+        story.append(P(f"{len(info)} context-only signal(s), such as packages that run an install script, are not listed; "
+                       "they are in the SARIF and JSON exports and in the app.", "small"))
+
+    # 5. AI notes, only when a model call actually succeeded for this scan
     by_id = {f.id: f for f in findings}
     ai_rows = [(by_id[fid], note) for fid, note in ai_notes.items() if fid in by_id]
+    story.append(P("AI investigation", "h1"))
     if not ai_rows:
-        story.append(P("No AI investigation was run for this scan, so this report contains no AI content."))
+        story.append(P("No AI investigation was run for this scan, so this report contains no AI content.", "small"))
+    else:
+        story.append(P("Assessments explain the scanner's evidence; every claim cites an evidence ID and none changes the scanner verdict.", "small"))
     for f, note in ai_rows:
-        story.append(P(f"{_t(f.package)}@{_t(f.version)} - {_t(f.rule_or_advisory)} (finding {_t(f.id)})", "h2"))
+        lines = [f"<b>{_t(f.package)}@{_t(f.version)} - {_t(f.rule_or_advisory)}</b>"]
         if ex := note.get("explain"):
-            story.append(P(f"<b>AI assessment ({_t(ex.get('model'))}):</b> {_t(ex.get('assessment'))}, confidence "
-                           f"{_t(ex.get('confidence'))}. Scanner verdict unchanged: {_t(ex.get('scanner_category'))} / "
-                           f"{_t(ex.get('scanner_severity'))}.", "cell"))
-            if ex.get("observed"):
-                story.append(P(f"<b>Observed:</b> {_t(ex['observed'], 600)}", "cell"))
-            for c in (ex.get("claims") or [])[:6]:
-                story.append(P(f"- {_t(c.get('text'), 400)} <font color='#5b6577'>[evidence {_t(', '.join(c.get('evidence_ids') or []))}]</font>", "cell"))
-            if ex.get("next_action"):
-                story.append(P(f"<b>AI-suggested next action:</b> {_t(ex['next_action'], 500)}", "cell"))
+            lines.append(f"{_t(ex.get('model'))}: {_t(ex.get('assessment'))}, confidence {_t(ex.get('confidence'))}"
+                         + (f". {_t(ex.get('observed'), 300)}" if ex.get("observed") else ""))
+            lines += [f"- {_t(c.get('text'), 240)} <font color='#5b6577'>[evidence {_t(', '.join(c.get('evidence_ids') or []))}]</font>"
+                      for c in (ex.get("claims") or [])[:3]]
         if ag := note.get("agents"):
             j = ag.get("judge") or {}
-            story.append(P(f"<b>Multi-agent judge ({_t(j.get('model'))}):</b> priority {_t(j.get('priority'))}. {_t(j.get('verdict'), 600)}", "cell"))
-            for c in (j.get("claims") or [])[:4]:
-                story.append(P(f"- {_t(c.get('text'), 400)} <font color='#5b6577'>[evidence {_t(', '.join(c.get('evidence_ids') or []))}]</font>", "cell"))
-        story.append(Spacer(1, 4))
+            lines.append(f"Agents judge ({_t(j.get('model'))}): priority {_t(j.get('priority'))}. {_t(j.get('verdict'), 300)}")
+        story.append(P("<br/>".join(lines), "cell"))
+        story.append(Spacer(1, 3))
 
-    # 7. CI gate
-    pol = gate_result.policy
-    story += [P("6. CI security gate", "h1"),
-              _table([[P("<b>Result</b>", "cell"), P(f"<b>{outcome}</b> (exit code {gate_result.exit_code}, mode {pol.mode})", "cell")],
-                      [P("<b>Threshold</b>", "cell"), P(f"fail on {pol.fail_on}" + (" - unknown severity gated" if pol.fail_on_unknown else "")
-                                                        + (" - dev-only findings ignored" if not pol.include_dev else ""), "cell")],
-                      [P("<b>Gated categories</b>", "cell"), P(_t(", ".join(pol.categories)) + " (repository posture never fails the build)", "cell")],
-                      [P("<b>Blocking findings</b>", "cell"), P(str(len(gate_result.blocking)), "cell")],
-                      [P("<b>Unknown severity</b>", "cell"), P(str(len(gate_result.unknown)), "cell")]]
-                     + ([[P("<b>Required checks not run</b>", "cell"), P(_t(", ".join(gate_result.failed_checks)), "cell")]]
-                        if gate_result.failed_checks else []),
-                     [40 * mm, width - 40 * mm], header=False)]
-    if gate_result.blocking:
-        story.append(P("Reasons for failure: findings at or above the threshold",
-                       "h2" if len(gate_result.blocking) <= 25 else "h2flow"))
-        story.append(_table([["Severity", "Package", "Finding", "Type"]] + [
-            [P(_sev(f.severity.value), "cell"), P(_t(f"{f.package}@{f.version}"), "mono"), P(_t(f.rule_or_advisory), "mono"),
-             P(_t(type_label(f).split(" (")[0]), "cell")] for f in sorted(gate_result.blocking, key=priority_key)],
-            [20 * mm, 50 * mm, 50 * mm, width - 120 * mm]))
-    elif gate_result.failed_checks:
-        story.append(P("The gate did not pass because required checks did not run.", "cell"))
-    story.append(P("The same decision is reproduced in CI with: <font face='Courier'>python -m tracii scan --fail-on "
-                   f"{pol.fail_on}</font> or the TRACII GitHub Action.", "small"))
-
-    # 8. exports + limitations
-    story += [P("7. Exports and limitations", "h1"),
-              P(f"<b>CycloneDX 1.5 SBOM</b>: available for this scan (GET /api/scans/{_t(result.scan_id)}/sbom) - "
-                f"{len({(p.name, p.version) for p in inv.packages})} components with purl, hash, scope, licence and the OSV advisories.", "cell"),
-              P(f"<b>SARIF 2.1.0</b>: available for this scan (GET /api/scans/{_t(result.scan_id)}/sarif) - results point at "
-                "package-lock.json for GitHub code scanning.", "cell"),
-              Spacer(1, 4)]
-    for line in ("No detected issue does not guarantee that the application is secure; results say what these checks detected.",
-                 "Suspicious behaviour indicators are heuristics, not confirmed malware.",
-                 "An advisory match means the installed version is in an affected range; it does not prove the vulnerable code is reachable or exploited.",
-                 "Dependency paths show how a package is installed, not whether application code calls it.",
-                 "Behaviour rules and GuardDog analyse only a prioritised subset of package tarballs; see Scan coverage.",
-                 "Known-malware matching only covers already-reported malware.",
-                 "AI assessments explain scanner evidence and never override the deterministic verdict.",
-                 "Offline benchmark results are separate from this scan and are not reproduced here."):
-        story.append(P(f"- {line}", "cell"))
-
-    # appendix: every finding
-    story += [PageBreak(), P("Appendix: all findings", "h1"),
-              P(f"{len(findings)} findings, grouped by type, in priority order.", "small")]
-    for label, group in (("Known malicious packages", mal), ("Known vulnerabilities", vulns),
-                         ("Suspicious behaviour (heuristic)", sus), ("Repository posture", posture), ("Version diff", other)):
-        if not group:
-            continue
-        story.append(P(f"{label} ({len(group)})", "h2" if len(group) <= 25 else "h2flow"))
-        story.append(_table([["ID", "Severity", "Package", "Reference", "Source", "Via"]] + [
-            [P(_t(f.id), "mono"), P(_sev(f.severity.value), "cell"), P(_t(f"{f.package}@{f.version}"), "mono"),
-             P(_t(f.rule_or_advisory), "mono"), P(_t(SOURCE_LABEL.get(f.source, f.source)), "cell"),
-             P(_t(", ".join(sorted({p.direct_dependency for p in f.paths})) or "-", 80) + (" (dev)" if _dev_only(f) else ""), "cell")]
-            for f in sorted(group, key=priority_key)],
-            [24 * mm, 17 * mm, 38 * mm, 38 * mm, 25 * mm, width - 142 * mm]))
+    # 6. coverage + limitations
+    story += [P("Coverage and limitations", "h1"),
+              _table([["Check", "Status", "Detail"]] + [
+                  [P(f"<b>{_t(c.name)}</b>", "cell"),
+                   P(f'<font color="{"#12805c" if c.status == "ran" else "#c27803" if c.status in ("skipped", "not_configured") else "#d92d20"}">'
+                     f"<b>{_t(c.status.replace('_', ' ').upper())}</b></font>", "cell"),
+                   P(_t(c.detail, 110), "small")] for c in result.checks],
+                  [32 * mm, 28 * mm, width - 60 * mm])]
+    for w in inv.warnings[:3]:
+        story.append(P(f"Inventory warning: {_t(w)}", "small"))
+    story.append(P("- No finding is not a guarantee of safety: results say what these checks detected. A check that did not run is never a pass.<br/>"
+                   "- An advisory match means the installed version is affected; it does not prove the vulnerable code is used.<br/>"
+                   "- Suspicious behaviour is a heuristic, not confirmed malware; the known-malware list only covers reported malware.<br/>"
+                   f"- Same gate in CI: <font face='Courier'>python -m tracii scan --fail-on {_t(pol.fail_on)}</font>. "
+                   "SBOM (CycloneDX) and SARIF exports are available for this scan in TRACII.", "small"))
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=18 * mm,
