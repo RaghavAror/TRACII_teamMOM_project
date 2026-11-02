@@ -1,8 +1,9 @@
 // Tracii frontend: no build step. All package-derived text is untrusted and is
 // rendered with textContent only (never innerHTML).
 import { $, h, api, post } from "./ui.js";
-import { initGraph, focusPackage } from "./graph3d.js";
+import { initGraph, focusPackage, preloadGraphLib, setGraphActive } from "./graph3d.js";
 import { runAgents } from "./agents-view.js";
+import { renderImpactMap, highlightInMap } from "./impact-map.js";
 
 const SEV_ORDER = ["critical", "high", "medium", "low", "info", "unknown"];
 const CAT_LABEL = {
@@ -44,12 +45,61 @@ function recommendedAction(f) {
       : `Upgrade the parent (${via || "unknown"}) to a release that depends on ${f.package} ≥ ${f.fixed_versions[0]}, or add an npm override. "Propose fix" builds the override and verifies it by rescanning.`;
   }
   if (f.category === "malicious_indicator") return f.severity === "info" ? "Context only (e.g. an install script or a capability). No action unless other findings point at this package."
-    : "Review the cited code before trusting this version. Compare it with the previous release in the version diff below; pin to a version without the behaviour if it is unexplained.";
+    : "Review the cited code before trusting this version. Compare it with the previous release in Tools → Version diff; pin to a version without the behaviour if it is unexplained.";
   return "Review the cited evidence.";
 }
 
 let scan = null;
 let activeCat = "known_vulnerability";
+
+// ---------- views (left sidebar) ----------
+const VIEW_TITLE = { scan: "New scan", overview: "Overview", findings: "Findings", graph: "Impact map",
+  reports: "CI gate & reports", details: "Scan details", ask: "Ask AI", diff: "Version diff" };
+const NEEDS_SCAN = new Set(["overview", "findings", "graph", "reports", "details", "ask"]);
+function showView(name, { push = true } = {}) {
+  if (!VIEW_TITLE[name] || (NEEDS_SCAN.has(name) && !scan)) name = "scan";
+  document.querySelectorAll(".view").forEach((v) => v.classList.toggle("hidden", v.dataset.view !== name));
+  document.querySelectorAll(".side-nav a, .brand").forEach((a) => a.classList.toggle("active", a.dataset.view === name));
+  $("#view-title").textContent = VIEW_TITLE[name];
+  $("#source-line").classList.toggle("hidden", !scan || name === "scan" || name === "diff");
+  if (push && location.hash !== `#/${name}`) history.pushState(null, "", `#/${name}`);
+  setGraphActive(name === "graph" && graphMode === "3d");   // pause the 3D render loop when it is not on screen
+  $(".content").scrollTo?.(0, 0);
+  window.scrollTo(0, 0);
+}
+window.addEventListener("popstate", () => showView(location.hash.replace("#/", "") || "scan", { push: false }));
+document.querySelectorAll("[data-view]").forEach((a) => a.tagName === "A" && a.addEventListener("click", (e) => {
+  e.preventDefault();
+  if (a.classList.contains("disabled")) return;
+  showView(a.dataset.view);
+}));
+document.addEventListener("tracii:view", (e) => { if (e.detail === "graph") setGraphMode("3d"); showView(e.detail); });   // from the 3D graph
+
+// Impact map is the default; the 3D graph is an optional "Explore in 3D" mode.
+let graphMode = "map";
+function setGraphMode(mode) {
+  graphMode = mode;
+  setGraphActive(mode === "3d" && location.hash === "#/graph");
+  document.querySelectorAll("#graph-mode button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+  $("#impact-map").classList.toggle("hidden", mode !== "map");
+  $("#graph-3d-panel").classList.toggle("hidden", mode !== "3d");
+}
+document.querySelectorAll("#graph-mode button").forEach((b) => b.addEventListener("click", () => setGraphMode(b.dataset.mode)));
+function showInMap(f) {
+  setGraphMode("map");
+  showView("graph");
+  highlightInMap(`${f.package}@${f.version}`);
+}
+document.addEventListener("click", (e) => {   // close the Export menu when clicking elsewhere
+  const m = $("#export-menu");
+  if (m.open && !m.contains(e.target)) m.open = false;
+});
+function enableScanViews() {
+  document.querySelectorAll(".needs-scan").forEach((a) => { a.classList.remove("disabled"); a.removeAttribute("title"); a.removeAttribute("aria-disabled"); });
+}
+document.querySelectorAll(".needs-scan").forEach((a) => { a.classList.add("disabled"); a.title = "Run a scan first"; a.setAttribute("aria-disabled", "true"); });
+showView(location.hash.replace("#/", "") || "scan", { push: false });
+preloadGraphLib();
 
 // ---------- intake ----------
 document.querySelectorAll("#intake .tabs button").forEach((b) => b.addEventListener("click", () => {
@@ -106,9 +156,13 @@ async function poll(id) {
     if (s.status === "done") {
       scan = s;
       activeCat = s.result.findings.some(isKnownMalware) ? "malicious_indicator" : "known_vulnerability";
+      $("#results").classList.remove("hidden");
+      enableScanViews();
       render();
       renderVerdict();
-      $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+      showView("overview");
+      setGraphMode("map");
+      renderImpactMap(scan, { onOpen: openFinding });
       initGraph(scan, { onOpenFinding: openFinding });
       return;
     }
@@ -124,12 +178,10 @@ function render() {
   const src = r.source;
   $("#source-line").textContent = `${src.kind}: ${src.label}` + (src.commit_sha ? ` @ ${src.ref} (${src.commit_sha})` : "") +
     ` · ${r.inventory.packages.length} packages · lockfile v${r.inventory.lockfile_version} · scanned ${new Date(r.created_at).toLocaleString()} · scan ${r.scan_id}`;
-  const base = `${window.TRACII_API}/api/scans/${encodeURIComponent(r.scan_id)}`;
-  $("#exports").replaceChildren(h("span", { class: "muted" }, "Export"),
-    h("a", { class: "btn", href: `${base}/sbom`, download: `tracii-${r.scan_id}.cdx.json`, title: "CycloneDX 1.5 JSON: every name@version with purl, hash, scope and the OSV advisories" }, "SBOM · CycloneDX"),
-    h("a", { class: "btn", href: `${base}/sarif`, download: `tracii-${r.scan_id}.sarif`, title: "SARIF 2.1.0 for GitHub code scanning; each result points at package-lock.json" }, "SARIF"),
-    h("button", { class: "btn", type: "button", onclick: downloadGateReport, title: "Markdown report from the CI gate policy (fail on high)" }, "CI gate report"),
-    h("button", { class: "btn primary-btn", type: "button", onclick: (e) => downloadPdf(e.currentTarget), title: "PDF assessment built from this scan's results, at the CI gate threshold selected below" }, "Download PDF report"));
+  renderExports(r);
+  const shown = r.findings.filter((f) => f.severity !== "info").length;
+  $("#nav-findings").textContent = shown || "";
+  $("#side-scan").textContent = `${src.kind === "fixture" ? "Demo" : src.kind}: ${src.label}`;
   $("#checks").replaceChildren(...r.checks.map((c) =>
     h("li", { class: `check ${c.status}` }, h("b", {}, c.name), ` ${c.status}`, c.packages_checked ? ` · ${c.packages_checked} pkgs` : "", h("div", { class: "muted" }, c.detail))));
   $("#warnings").replaceChildren(...r.inventory.warnings.map((w) => h("div", { class: "warn" }, "⚠ " + w)));
@@ -146,7 +198,7 @@ function render() {
     const c = {};
     list.forEach((f) => { c[f.severity] = (c[f.severity] || 0) + 1; });
     return h("button", { class: `sum-card ${cls} ${list.length ? "has" : ""}`, type: "button", title: help,
-      onclick: () => { activeCat = cat; render(); $("#findings").scrollIntoView({ behavior: "smooth", block: "center" }); } },
+      onclick: () => { activeCat = cat; render(); showView("findings"); } },
       h("div", { class: "sum-n" }, list.length), h("div", { class: "sum-l" }, label),
       h("div", { class: "sevs" }, SEV_ORDER.filter((s) => c[s]).map((s) => h("span", { class: `sev ${s}` }, `${c[s]} ${s}`))),
       h("div", { class: "muted" }, list.length ? help : "No issue detected by these checks."));
@@ -157,6 +209,32 @@ function render() {
   renderTable();
 }
 
+// One Export menu (top bar) and the same items as cards in "CI gate & reports".
+function renderExports(r) {
+  const base = `${window.TRACII_API}/api/scans/${encodeURIComponent(r.scan_id)}`;
+  const items = [
+    ["PDF security report", "Assessment of this scan at the gate threshold set in CI gate & reports", (cls) =>
+      h("button", { class: cls, type: "button", onclick: (e) => downloadPdf(e.currentTarget) }, "Download PDF")],
+    ["SBOM · CycloneDX", "Every package and version with purl, hash, scope and advisories", (cls) =>
+      h("a", { class: cls, href: `${base}/sbom`, download: `tracii-${r.scan_id}.cdx.json` }, "Download SBOM")],
+    ["SARIF", "For GitHub code scanning; each result points at package-lock.json", (cls) =>
+      h("a", { class: cls, href: `${base}/sarif`, download: `tracii-${r.scan_id}.sarif` }, "Download SARIF")],
+    ["CI gate report", "Markdown summary of the gate decision", (cls) =>
+      h("button", { class: cls, type: "button", onclick: downloadGateReport }, "Download report")],
+  ];
+  const menu = $("#export-menu");
+  menu.classList.remove("hidden");
+  $("#exports").replaceChildren(...items.map(([label, help, el]) => {
+    const node = el("menu-item");
+    node.textContent = label;
+    node.title = help;
+    node.addEventListener("click", () => setTimeout(() => { menu.open = false; }, 0));
+    return node;
+  }));
+  $("#report-links").replaceChildren(...items.map(([label, help, el]) =>
+    h("div", { class: "report-card" }, h("b", {}, label), h("p", { class: "muted" }, help), el("btn"))));
+}
+
 function renderTable() {
   const q = $("#filter").value.trim().toLowerCase();
   const rows = scan.result.findings
@@ -165,10 +243,9 @@ function renderTable() {
   $("#findings tbody").replaceChildren(...(rows.length ? rows.map((f) => h("tr", { onclick: () => showDetail(f) },
     h("td", {}, h("span", { class: `sev ${f.severity}` }, f.severity)),
     h("td", { class: "mono" }, `${f.package}@${f.version}`, isKnownMalware(f) ? h("span", { class: "tag malware" }, "known malware") : null),
-    h("td", { class: "mono" }, f.rule_or_advisory),
-    h("td", {}, srcLabel(f.source)),
+    h("td", { class: "mono", title: srcLabel(f.source) }, f.rule_or_advisory),
     h("td", { class: "muted" }, f.paths[0] ? (f.paths[0].dev_only ? "dev · " : "") + f.paths[0].direct_dependency : "—"),
-  )) : [h("tr", {}, h("td", { colspan: 5, class: "muted" }, "No findings in this category from the checks that ran."))]));
+  )) : [h("tr", {}, h("td", { colspan: 4, class: "muted" }, "No findings in this category from the checks that ran."))]));
 }
 $("#filter").addEventListener("input", () => scan && renderTable());
 $("#graph-focus").addEventListener("click", (e) => {
@@ -201,7 +278,7 @@ function openFinding(id) {
   activeCat = f.category;
   render();
   showDetail(f);
-  $("#detail").scrollIntoView({ behavior: "smooth", block: "start" });
+  showView("findings");
 }
 
 function showDetail(f) {
@@ -226,24 +303,24 @@ function showDetail(f) {
       h("dt", {}, "Reaches your app"), h("dd", {}, f.paths.length ? `${isDirect(f) ? "directly" : "transitively"} via ${[...new Set(f.paths.map((p) => p.direct_dependency))].join(", ")}${isDevOnly(f) ? " (dev only: not shipped)" : ""}` : "path not recorded"),
       f.category === "known_vulnerability" ? [h("dt", {}, "Fixed in"), h("dd", {}, f.fixed_versions.length ? f.fixed_versions.join(", ") : h("span", { class: "warn" }, "no fixed version published"))] : null),
     h("div", { class: `action ${isKnownMalware(f) ? "mal" : ""}` }, h("b", {}, "Recommended action: "), recommendedAction(f)),
-    h("h4", {}, "Evidence"), evidenceList(f),
-    h("h4", {}, "Impact path"), pathView(f),
-    h("button", { class: "ghost", onclick: (e) => { if (!focusPackage(`${f.package}@${f.version}`)) e.target.textContent = "Not drawn in the 3D view"; } }, "Show in 3D graph"),
-    h("h4", {}, "Unknowns / limitations"), h("ul", {}, f.limitations.map((l) => h("li", { class: "muted" }, l))),
-    h("h4", {}, "AI investigation"),
-    h("p", { class: "muted" }, "Model output is an assessment, not a finding. Every claim must cite the evidence IDs above; uncited claims are discarded and the scanner verdict is never changed."),
-    h("div", { class: "row" },
-      h("button", { onclick: () => explain(f, aiBox, false, false) }, "Explain with evidence"),
-      h("button", { class: "ghost", onclick: () => explain(f, aiBox, true, false) }, "Deep investigation (Wonder)"),
-      h("button", { class: "ghost", onclick: () => explain(f, aiBox, false, true) }, "+ independent assessment")),
-    aiBox,
-    h("h4", {}, "Multi-agent investigation"),
-    h("p", { class: "muted" }, "Methodology agents (SSVC + EPSS + KEV, MITRE ATT&CK, SLSA provenance + OpenSSF Scorecard, STRIDE) run in parallel; a judge reconciles them and Spark Open reviews independently."),
-    h("div", { class: "row" }, h("button", { onclick: () => runAgents(scan.scan_id, f, agentBox, mission.value) }, "Run investigation agents"), mission),
-    agentBox,
-    h("h4", {}, "Next step"),
-    h("div", { class: "row" }, h("button", { onclick: () => proposeFix(f, fixBox) }, "Propose fix")),
+    h("div", { class: "row actions" },
+      h("button", { onclick: () => proposeFix(f, fixBox) }, "Propose fix"),
+      h("button", { class: "ghost", onclick: () => explain(f, aiBox, false, false) }, "Explain with AI"),
+      h("button", { class: "ghost", onclick: () => showInMap(f) }, "Show on map")),
     fixBox,
+    aiBox,
+    h("details", { class: "fold", open: true }, h("summary", {}, "How it reaches your app"), pathView(f)),
+    h("details", { class: "fold" }, h("summary", {}, `Evidence (${f.evidence.length})`), evidenceList(f)),
+    h("details", { class: "fold" }, h("summary", {}, `Limitations (${f.limitations.length})`),
+      h("ul", {}, f.limitations.map((l) => h("li", { class: "muted" }, l)))),
+    h("details", { class: "fold" }, h("summary", {}, "More AI options"),
+      h("p", { class: "muted" }, "AI output is an assessment, not a finding: every claim must cite the evidence above, uncited claims are discarded, and the scanner verdict never changes."),
+      h("div", { class: "row" },
+        h("button", { class: "ghost", onclick: () => explain(f, aiBox, true, false), title: "Muse Wonder, multi-step reasoning" }, "Deep explanation"),
+        h("button", { class: "ghost", onclick: () => explain(f, aiBox, false, true), title: "Adds open-weight second opinions (Glimmer, Spark Open)" }, "Explain + second opinion")),
+      h("p", { class: "muted" }, "Investigation agents (~1 min): four specialists in parallel (exploit likelihood and priority, attacker techniques, build integrity, threat model), then a judge reconciles them."),
+      h("div", { class: "row" }, h("button", { class: "ghost", onclick: () => runAgents(scan.scan_id, f, agentBox, mission.value) }, "Run investigation agents"), mission),
+      agentBox),
   );
 }
 
@@ -376,11 +453,23 @@ $("#diff-form").addEventListener("submit", async (e) => {
   try {
     const r = await post("/api/diff", f);
     const kv = (label, v) => h("div", {}, h("b", {}, label + ": "), Array.isArray(v) ? (v.join(", ") || "none") : (Object.keys(v).length ? JSON.stringify(v) : "none"));
+    const list = (v, n = 40) => v.length > n ? [...v.slice(0, n), `… +${v.length - n} more`] : v;
+    const flagged = Object.entries(r.code_changes || {}).filter(([, c]) => c.new_capabilities.length || c.injected_long_line || c.obfuscator_ids_added);
     out.replaceChildren(
+      h("p", { class: r.security_relevant ? "warn" : "muted" }, r.security_relevant
+        ? `${r.findings.length} security-relevant change${r.findings.length === 1 ? "" : "s"} between ${r.old_version} and ${r.new_version}.`
+        : `No security-relevant changes found between ${r.old_version} and ${r.new_version}`
+          + ` (${r.files_modified.length} file${r.files_modified.length === 1 ? "" : "s"} modified, ${r.files_added.length} added, ${r.files_removed.length} removed).`),
       h("p", { class: "muted" }, r.note),
       kv("Install scripts added/changed", r.install_scripts_added_or_changed), kv("Hosts added", r.hosts_added),
       kv("Capabilities added", Object.keys(r.capabilities_added)), kv("Dependencies added", r.dependencies_added),
-      kv("Files added", r.files_added.slice(0, 40)),
+      kv("Dependencies removed", r.dependencies_removed),
+      kv("Files modified", list(r.files_modified || [])),
+      kv("Files added", list(r.files_added)), kv("Files removed", list(r.files_removed)),
+      flagged.length ? kv("Code added with new behaviour", flagged.map(([p, c]) =>
+        `${p} (+${c.lines_added} lines${c.new_capabilities.length ? "; new: " + c.new_capabilities.join(", ") : ""}`
+        + `${c.injected_long_line ? `; ${c.injected_long_line.length}-char line at ${c.injected_long_line.line}` : ""}`
+        + `${c.obfuscator_ids_added ? `; ${c.obfuscator_ids_added} obfuscator ids` : ""})`)) : null,
       h("ul", {}, r.findings.map((x) => h("li", {}, h("span", { class: `sev ${x.severity}` }, x.severity), " ", x.title,
         h("ul", {}, x.evidence.map((ev) => h("li", { class: "mono muted" }, `${ev.summary}${ev.file ? " " + ev.file + (ev.line ? ":" + ev.line : "") : ""}`)))))));
   } catch (err) { out.textContent = err.message; }
@@ -400,6 +489,9 @@ async function renderVerdict() {
   let g = null;
   try { g = await api(`/api/scans/${encodeURIComponent(r.scan_id)}/gate`); } catch { /* shown as unknown */ }
   const outcome = g?.outcome || "unknown";
+  const badge = $("#nav-gate");
+  badge.textContent = mal.length ? "malware" : outcome === "unknown" ? "" : outcome;
+  badge.className = `badge b-${mal.length ? "fail" : outcome}`;
   const level = mal.length ? "critical" : outcome === "fail" ? "fail" : outcome === "pass" ? "pass" : "warn";
   const headline = mal.length ? `${mal.length} known malicious package${mal.length > 1 ? "s" : ""} in your dependency tree`
     : outcome === "fail" ? `${g.blocking.length} blocking finding${g.blocking.length === 1 ? "" : "s"} at severity high or above`
@@ -417,10 +509,11 @@ async function renderVerdict() {
       h("div", { class: "v-stats" },
         stat(mal.length, "known malware", "mal"), stat(vulns.length, "vulnerabilities", "vuln"), stat(sus.length, "suspicious (medium+)", "sus"),
         stat(g ? g.blocking.length : "–", "blocking", ""), stat(r.inventory.packages.length, `packages · ${direct} direct`, ""))),
-    first.length ? h("div", { class: "v-first" }, h("div", { class: "v-kicker" }, "Look at these first"),
+    first.length ? h("div", { class: "v-first" }, h("div", { class: "v-kicker" }, "Fix first"),
       h("ol", {}, first.map((f) => h("li", {}, h("button", { class: "linklike", onclick: () => openFinding(f.id) }, `${f.package}@${f.version}`),
         ` ${f.rule_or_advisory} `, whyFirst(f).map((w) => h("span", { class: "tag" }, w))))),
-      h("div", { class: "muted" }, "Ordered by scanner facts only: known malware, severity, production path, direct dependency, fix available.")) : null);
+      h("div", { class: "muted" }, "Ordered by scanner facts only: known malware, severity, production path, direct dependency, fix available."),
+      h("button", { class: "ghost sm", onclick: () => showView("findings") }, `See all ${r.findings.filter((f) => f.severity !== "info").length} findings →`)) : null);
   renderGate();
 }
 const stat = (n, label, cls) => h("div", { class: `v-stat ${cls}` }, h("b", {}, n), h("span", {}, label));

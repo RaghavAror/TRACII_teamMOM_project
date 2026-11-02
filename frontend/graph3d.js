@@ -24,6 +24,19 @@ function loadLib() {
   return libPromise;
 }
 
+// Start downloading the 1.4 MB library while the browser is idle, so it is ready before a scan finishes.
+export function preloadGraphLib() {
+  const go = () => loadLib().catch(() => { libPromise = null; });   // retry on the next real use
+  (window.requestIdleCallback || ((cb) => setTimeout(cb, 1500)))(go);
+}
+
+// The render loop only runs while the 3D view is on screen.
+export function setGraphActive(active) {
+  G.active = active;
+  if (!G.fg) return;
+  if (active) G.fg.resumeAnimation(); else G.fg.pauseAnimation();
+}
+
 const G = {
   fg: null, scanId: null, raw: null, parents: new Map(), byId: new Map(), onOpenFinding: null,
   flaggedOnly: false, hlNodes: new Set(), hlLinks: new Set(), wave: new Set(), targets: new Set(),
@@ -114,7 +127,7 @@ function focus(n) {
 export function focusPackage(label) {
   const n = G.fg?.graphData().nodes.find((x) => x.label === label);
   if (!n) return false;
-  $("#graph-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  document.dispatchEvent(new CustomEvent("tracii:view", { detail: "graph" }));   // the graph lives in its own view
   focus(n);
   return true;
 }
@@ -134,22 +147,32 @@ export async function initGraph(scan, { onOpenFinding }) {
     $("#graph-flagged").checked = G.flaggedOnly;
     el.replaceChildren();
     G.fg?._destructor?.();
+    // Lay the graph out before the first frame (scaled to its size) so it appears settled, not flying in.
+    const n = raw.nodes.length;
     G.fg = ForceGraph3D()(el)
       .backgroundColor(css("--g-bg")).width(el.clientWidth).height(el.clientHeight)
       .nodeId("id").nodeLabel(nodeLabel).nodeOpacity(0.95).nodeResolution(12)
       .linkDirectionalArrowLength(2.5).linkDirectionalArrowRelPos(1).linkDirectionalParticleWidth(2)
       .onNodeClick(focus)
       .onBackgroundClick(() => { G.hlNodes.clear(); G.hlLinks.clear(); refresh(); showNodeInfo(null); })
-      .cooldownTicks(120)
+      .warmupTicks(n > 1500 ? 20 : n > 400 ? 60 : 150)
+      .cooldownTicks(40)
       .graphData(visibleData());
     let fitted = false;
     G.userFocused = false;
     G.fg.onEngineStop(() => { if (!fitted) { fitted = true; if (!G.userFocused) G.fg.zoomToFit(600, 30); } });
     refresh();
-    new ResizeObserver(() => G.fg?.width(el.clientWidth)).observe(el);
+    if (!G.active) G.fg.pauseAnimation();
+    // The graph view may be hidden when this runs (0x0); size it whenever the view is shown or resized.
+    let sized = el.clientWidth > 0 && el.clientHeight > 0;
+    new ResizeObserver(() => {
+      if (!el.clientWidth || !el.clientHeight || !G.fg) return;
+      G.fg.width(el.clientWidth).height(el.clientHeight);
+      if (!sized) { sized = true; if (!G.userFocused) G.fg.zoomToFit(400, 30); }   // first time the view is shown
+    }).observe(el);
     $("#graph-stats").textContent = `${raw.nodes.length - 1} packages · ${raw.edges.length} edges` + (G.flaggedOnly ? ` · large graph: showing ${G.fg.graphData().nodes.length - 1} on paths to findings` : "");
   } catch (err) {
-    el.replaceChildren(h("p", { class: "error pad" }, `3D view unavailable: ${err.message}. The findings table and impact paths below still work.`));
+    el.replaceChildren(h("p", { class: "error pad" }, `3D view unavailable: ${err.message}. Findings and their dependency paths are still available under Findings.`));
   }
 }
 
