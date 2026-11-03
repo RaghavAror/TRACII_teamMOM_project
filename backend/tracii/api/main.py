@@ -71,7 +71,11 @@ async def rate_limit(request: Request, call_next):
             if len(_HITS) > 10_000:   # bound memory: forget idle clients
                 for k in [k for k, v in _HITS.items() if not v or now - v[-1] > 60]:
                     del _HITS[k]
-    return await call_next(request)
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/") and "cache-control" not in response.headers:
+        # UI files change with every release: make browsers revalidate instead of running a stale app.js
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 # ---------- helpers ----------

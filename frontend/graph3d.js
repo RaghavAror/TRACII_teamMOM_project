@@ -34,7 +34,36 @@ export function preloadGraphLib() {
 export function setGraphActive(active) {
   G.active = active;
   if (!G.fg) return;
-  if (active) G.fg.resumeAnimation(); else G.fg.pauseAnimation();
+  if (active) G.fg.resumeAnimation(); else if (!G.prewarming) G.fg.pauseAnimation();
+  overlay(active && !G.warmed);
+}
+
+// First-time work (canvas sizing, GPU setup, finishing the layout) is what made the first "Explore in 3D" slow.
+// Do it in the background while the Impact map is on screen (the 3D panel is laid out but invisible), then pause.
+export function prewarmGraph() {
+  G.wantPrewarm = true;
+  if (!G.fg || G.warmed || G.prewarming) return;
+  G.prewarming = true;
+  G.fg.resumeAnimation();
+  G.prewarmTimer = setTimeout(finishPrewarm, 6000);   // fallback if the layout never reports that it stopped
+}
+function finishPrewarm() {
+  if (!G.prewarming) return;
+  clearTimeout(G.prewarmTimer);
+  G.prewarming = false;
+  G.warmed = true;
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (!G.active) G.fg?.pauseAnimation(); }));   // keep two painted frames
+  overlay(false);
+  document.dispatchEvent(new CustomEvent("tracii:3d-ready"));
+}
+export const graphReady = () => !!G.warmed;
+function overlay(show) {
+  const el = $("#graph3d");
+  el?.querySelector(".g3d-loading")?.remove();
+  if (show && el && G.fg) el.append(loadingBox("Preparing the 3D view…", "Arranging the packages. It appears by itself in a moment."));
+}
+function loadingBox(title, sub) {
+  return h("div", { class: "g3d-loading" }, h("div", { class: "spinner" }), h("b", {}, title), h("span", {}, sub));
 }
 
 const G = {
@@ -94,7 +123,8 @@ function refresh() {
   if (!G.fg) return;
   G.fg.nodeColor(nodeColor).nodeVal(nodeVal)
     .linkColor((l) => css(linkOn(l) ? "--g-hl" : "--g-link")).linkWidth((l) => (linkOn(l) ? 1.6 : 0.3))
-    .linkDirectionalParticles((l) => (linkOn(l) ? 3 : 0));
+    .linkDirectionalParticles((l) => (linkOn(l) ? 3 : 0))
+    .linkDirectionalArrowLength((l) => (G.big && !linkOn(l) ? 0 : 2.5));
 }
 
 function highlightAncestors(id) {
@@ -135,9 +165,10 @@ export function focusPackage(label) {
 export async function initGraph(scan, { onOpenFinding }) {
   G.onOpenFinding = onOpenFinding;
   G.scanId = scan.scan_id;
+  G.warmed = false; G.prewarming = false;   // a new scan needs preparing again
   stopReplay(true);
   const el = $("#graph3d");
-  el.replaceChildren(h("p", { class: "muted pad" }, "Loading 3D view…"));
+  el.replaceChildren(loadingBox("Loading the 3D view…", "Downloading the graph of every package in this project. This takes a few seconds the first time."));
   try {
     const [ForceGraph3D, raw] = await Promise.all([loadLib(), api(`/api/scans/${scan.scan_id}/graph`)]);
     G.raw = raw;
@@ -147,28 +178,39 @@ export async function initGraph(scan, { onOpenFinding }) {
     $("#graph-flagged").checked = G.flaggedOnly;
     el.replaceChildren();
     G.fg?._destructor?.();
-    // Lay the graph out before the first frame (scaled to its size) so it appears settled, not flying in.
-    const n = raw.nodes.length;
+    // Lay the graph out before the first frame so it appears settled instead of flying in while the user watches.
+    // Size the pre-layout by what is actually drawn (paths-to-findings mode draws far fewer nodes than the lockfile has).
+    const data = visibleData();
+    const n = data.nodes.length;
+    const big = G.big = n > 300;
     G.fg = ForceGraph3D()(el)
       .backgroundColor(css("--g-bg")).width(el.clientWidth).height(el.clientHeight)
-      .nodeId("id").nodeLabel(nodeLabel).nodeOpacity(0.95).nodeResolution(12)
-      .linkDirectionalArrowLength(2.5).linkDirectionalArrowRelPos(1).linkDirectionalParticleWidth(2)
+      .nodeId("id").nodeLabel(nodeLabel).nodeOpacity(0.95).nodeResolution(big ? 6 : 12)
+      // one arrow mesh per link is the main draw cost on large graphs; direction is still shown on highlighted paths
+      .linkDirectionalArrowLength((l) => (big && !linkOn(l) ? 0 : 2.5)).linkDirectionalArrowRelPos(1).linkDirectionalParticleWidth(2)
       .onNodeClick(focus)
       .onBackgroundClick(() => { G.hlNodes.clear(); G.hlLinks.clear(); refresh(); showNodeInfo(null); })
-      .warmupTicks(n > 1500 ? 20 : n > 400 ? 60 : 150)
-      .cooldownTicks(40)
-      .graphData(visibleData());
+      .warmupTicks(n > 1500 ? 60 : n > 400 ? 120 : 200)
+      .cooldownTicks(n > 400 ? 15 : 30)
+      .graphData(data);
     let fitted = false;
     G.userFocused = false;
-    G.fg.onEngineStop(() => { if (!fitted) { fitted = true; if (!G.userFocused) G.fg.zoomToFit(600, 30); } });
+    G.fg.onEngineStop(() => {
+      if (!fitted) { fitted = true; if (!G.userFocused) G.fg.zoomToFit(G.prewarming ? 0 : 600, 30); }
+      if (G.prewarming) setTimeout(finishPrewarm, 50);
+      else if (!G.warmed) { G.warmed = true; overlay(false); document.dispatchEvent(new CustomEvent("tracii:3d-ready")); }
+    });
     refresh();
+    G.warmed = false; G.prewarming = false;
     if (!G.active) G.fg.pauseAnimation();
+    if (G.active) overlay(true);
+    else if (G.wantPrewarm) prewarmGraph();
     // The graph view may be hidden when this runs (0x0); size it whenever the view is shown or resized.
     let sized = el.clientWidth > 0 && el.clientHeight > 0;
     new ResizeObserver(() => {
       if (!el.clientWidth || !el.clientHeight || !G.fg) return;
       G.fg.width(el.clientWidth).height(el.clientHeight);
-      if (!sized) { sized = true; if (!G.userFocused) G.fg.zoomToFit(400, 30); }   // first time the view is shown
+      if (!sized) { sized = true; if (!G.userFocused) G.fg.zoomToFit(0, 30); }   // first time the view is shown: frame it at once
     }).observe(el);
     $("#graph-stats").textContent = `${raw.nodes.length - 1} packages · ${raw.edges.length} edges` + (G.flaggedOnly ? ` · large graph: showing ${G.fg.graphData().nodes.length - 1} on paths to findings` : "");
   } catch (err) {

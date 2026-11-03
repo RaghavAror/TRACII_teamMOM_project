@@ -25,13 +25,20 @@ def explain(finding: Finding, slices: list[Slice], client: OpenAICompatClient, d
             "threat_patterns": [p["id"] for p in patterns]}
     try:
         raw = client.chat_json(
-            role.model_id, grounding.SYSTEM_PROMPT, grounding.build_user_prompt(finding, slices, patterns, paths),
+            role.model_id, grounding.SYSTEM_PROMPT, grounding.build_user_prompt(finding, slices, patterns, paths) + PLAIN_STYLE,
             grounding.INVESTIGATION_SCHEMA, "tracii_investigation",
             reasoning_effort="high" if deep else "medium")
         return {**base, "model": role.model_id, "ai_status": "ok", **grounding.validate_investigation(raw, finding)}
     except ModelUnavailable as exc:
         return {**base, "model": None, "ai_status": "unavailable", "ai_error": str(exc)[:200],
                 **grounding.deterministic_summary(finding, paths)}
+
+
+# How the explanation text should read in the UI. Grounding rules are unchanged: every claim still cites evidence IDs.
+PLAIN_STYLE = ("\n\nSTYLE: the reader may not be a security expert. Write `observed`, `why_it_matters`, claims and "
+               "`next_action` in plain, short sentences (each under 30 words). Say what an attacker could actually do "
+               "(e.g. crash the app, run commands) instead of quoting CVSS vectors or scores. Name the concrete fix "
+               "version when the evidence gives one. Do not put evidence IDs or hashes in the text; use `evidence_ids`.")
 
 
 def independent_assessments(finding: Finding, slices: list[Slice], primary: dict,
@@ -81,7 +88,12 @@ def answer_question(question: str, scan: ScanResult, client: OpenAICompatClient)
     user = ("SCAN CONTEXT (trusted):\n" + json.dumps({"summary": scan.summary(), "checks": checks,
                                                      "findings": compact}, indent=1)
             + f"\n\nUSER QUESTION:\n{question[:2000]}\n\nAnswer only from the scan context and cite finding_ids. "
-              "If the scan cannot answer it, say so in unknowns.")
+              "If the scan cannot answer it, say so in unknowns.\n\n"
+              "WRITE FOR A NON-EXPERT. In `answer`: first one or two plain sentences that directly answer the question. "
+              "Then, only if useful, at most 6 short bullet lines, each on its own line starting with '- '. Group by "
+              "package (e.g. '- lodash 4.17.20: 5 known vulnerabilities, upgrade to 4.18.0'), never list every advisory. "
+              "Do NOT put finding IDs, hashes or advisory IDs in `answer`; put the supporting finding IDs (at most 12, the "
+              "most relevant) only in `cited_finding_ids`. Keep `answer` under 120 words. Keep `unknowns` short.")
     ids = {f.id for f in scan.findings}
     try:
         raw = client.chat_json(_ROLE["investigator"].model_id, grounding.SYSTEM_PROMPT, user,

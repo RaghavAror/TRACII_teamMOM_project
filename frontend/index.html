@@ -29,7 +29,7 @@
   <div class="side-foot">
     <div id="side-scan" class="side-scan muted">No scan yet</div>
     <button type="button" class="side-btn open-guide">Guide</button>
-    <button type="button" id="models-btn" class="side-btn"><span id="models-dot" class="dot"></span>Model status</button>
+    <button type="button" id="models-btn" class="side-about" title="About TRACII and the status of its AI models"><span id="models-dot" class="dot"></span>About &amp; AI status</button>
   </div>
 </aside>
 
@@ -98,10 +98,7 @@
   <!-- ===== Overview ===== -->
   <section class="view" data-view="overview" id="view-overview">
     <div id="verdict" class="verdict card"></div>
-    <div class="card">
-      <h2>Findings by type <small>counted separately, never merged into one score</small></h2>
-      <div id="summary" class="summary"></div>
-    </div>
+    <div id="fix-plan" class="card fix-plan"></div>
   </section>
 
   <!-- ===== Findings ===== -->
@@ -110,9 +107,9 @@
       <div class="card">
         <div class="tabs" id="cat-tabs"></div>
         <input id="filter" placeholder="filter by package…" aria-label="filter findings by package">
-        <table id="findings"><thead><tr><th>Severity</th><th>Package</th><th>Advisory / rule</th><th>Reaches app via</th></tr></thead><tbody></tbody></table>
+        <table id="findings"><thead><tr><th>Worst</th><th>Package</th><th>What was found</th><th>Comes in through</th></tr></thead><tbody></tbody></table>
       </div>
-      <div class="card sticky" id="detail"><div class="empty"><p><b>Select a finding</b></p><p class="muted">What it is, how it reaches your app, the fix and an AI explanation appear here.</p></div></div>
+      <div class="card sticky" id="detail"><div class="empty"><p><b>Select a package</b></p><p class="muted">What was found, the fix and an AI explanation appear here.</p></div></div>
     </div>
   </section>
 
@@ -260,43 +257,95 @@
   </section>
 
   <section id="g-terms">
-    <h3>Key terminology</h3>
-    <dl class="terms">
-      <dt>Dependency</dt><dd>An external software package that an application uses.</dd>
-      <dt>Direct dependency</dt><dd>A package explicitly included by your application.</dd>
-      <dt>Transitive dependency</dt><dd>A package brought in through another dependency.</dd>
-      <dt>Vulnerability</dt><dd>A security weakness that could potentially be exploited.</dd>
-      <dt>Malware</dt><dd>Software designed to perform harmful or unauthorised actions.</dd>
-      <dt>SCA (Software Composition Analysis)</dt><dd>Analysing third-party software components for security and licence risks.</dd>
-      <dt>SBOM (Software Bill of Materials)</dt><dd>A structured inventory of the software components and dependencies used by an application.</dd>
-      <dt>CycloneDX</dt><dd>A standard format for representing and exchanging an SBOM.</dd>
-      <dt>SARIF</dt><dd>A standard format for sharing static-analysis and security scan results.</dd>
-      <dt>CI/CD</dt><dd>Automated workflows that build, test and deliver software.</dd>
-      <dt>CI Security Gate</dt><dd>A policy-based checkpoint that can fail a build when configured security thresholds are exceeded.</dd>
-      <dt>Severity</dt><dd>The seriousness of a security finding, commonly Critical, High, Medium or Low.</dd>
-      <dt>Evidence</dt><dd>Verifiable information supporting a security finding, such as an advisory or code indicator.</dd>
-      <dt>Impact path</dt><dd>The dependency chain through which a package reaches your application.</dd>
-      <dt>Remediation</dt><dd>A recommended action to reduce or resolve a security risk.</dd>
-      <dt>False positive</dt><dd>A reported issue that is not actually a security problem.</dd>
-      <dt>Evaluation / Benchmark</dt><dd>Testing the detection engine against a separate labelled dataset to measure detection performance and false alarms.</dd>
-      <dt>Known malware list</dt><dd>A collection of previously identified malicious packages; a package absent from the list is not necessarily safe.</dd>
-      <dt>Version diff</dt><dd>A comparison of security-relevant changes between two versions of a package.</dd>
-      <dt>Repository posture</dt><dd>Security-related observations about the repository and its configuration. (Not yet enabled in scans; the report shows this check as skipped.)</dd>
-    </dl>
+    <h3>Key terms, in plain words</h3>
+    <p class="muted">Open a group to read it. Each term is one or two sentences.</p>
+
+    <details class="term-group" open>
+      <summary>The basics: what is being checked</summary>
+      <dl class="terms">
+        <dt>Dependency / package</dt><dd>A ready-made piece of code your app borrows instead of writing it, like a part a car maker buys from a supplier.</dd>
+        <dt>npm</dt><dd>The public store where JavaScript packages are published and downloaded. TRACII checks npm projects.</dd>
+        <dt>package.json</dt><dd>Your app's shopping list: the packages you asked for.</dd>
+        <dt>Lockfile (package-lock.json)</dt><dd>The receipt: the exact version of every package that actually got installed, including the ones you never asked for directly.</dd>
+        <dt>Direct dependency</dt><dd>A package your app asks for by name.</dd>
+        <dt>Transitive dependency</dt><dd>A package that comes along because another package needs it: the supplier's supplier.</dd>
+        <dt>Dev-only dependency</dt><dd>A package used only while building or testing, not shipped to your users. Problems there matter less.</dd>
+        <dt>Install script</dt><dd>A small program a package can run automatically when it is installed. Useful for setup, but also the most common way malware gets in.</dd>
+        <dt>Version</dt><dd>A numbered release of a package, like 4.17.20. A change in the first number (a “major version”) can break things.</dd>
+      </dl>
+    </details>
+
+    <details class="term-group">
+      <summary>What TRACII can find</summary>
+      <dl class="terms">
+        <dt>Vulnerability</dt><dd>A known security bug in a package version, like a recall notice for a faulty part.</dd>
+        <dt>Malware</dt><dd>Code written on purpose to do harm, such as stealing passwords or keys.</dd>
+        <dt>Known malware</dt><dd>A package version already reported as malicious in a public list. The strongest kind of finding: remove it.</dd>
+        <dt>Suspicious code</dt><dd>Package code that behaves like malware often does (for example, sending your data somewhere when installed). A warning to review, not proof.</dd>
+        <dt>Severity</dt><dd>How serious a finding is: Critical, High, Medium, Low. “Info” is just context, not a problem.</dd>
+        <dt>Evidence</dt><dd>The facts behind a finding, such as the advisory text or the exact line of code, with a link to check it yourself.</dd>
+        <dt>Impact path</dt><dd>The chain of packages that brings a risky one into your app, for example your app → express → qs.</dd>
+        <dt>Confidence</dt><dd>How sure the scanner is. High means an exact match to a published report; low means a single hint that is often harmless.</dd>
+        <dt>False positive</dt><dd>A warning that turns out not to be a real problem.</dd>
+        <dt>Repository posture</dt><dd>General security hygiene of the project's code repository. Not enabled in scans yet; it is shown as skipped.</dd>
+        <dt>Licence</dt><dd>The legal terms for using a package. Some (“copyleft”) come with obligations; TRACII lists them, it does not give legal advice.</dd>
+      </dl>
+    </details>
+
+    <details class="term-group">
+      <summary>Where the information comes from</summary>
+      <dl class="terms">
+        <dt>OSV</dt><dd>A free, public database run by Google that collects security reports for open-source packages. TRACII asks it about every exact version you install.</dd>
+        <dt>Advisory (CVE, GHSA)</dt><dd>A published security report about a package. CVE-… and GHSA-… are their ID numbers, like a case number.</dd>
+        <dt>MAL- record</dt><dd>An OSV report saying a package version is malware. This is TRACII's “known malware list”. A package that is not on it is not automatically safe.</dd>
+        <dt>GuardDog</dt><dd>A free tool from the security company Datadog that reads package code and flags patterns typical of malware, such as hidden downloads or stealing environment data.</dd>
+        <dt>TRACII behaviour rules</dt><dd>TRACII's own checks that read package code for attack patterns (for example “collect secrets, then send them over the internet”). Code is only read, never run.</dd>
+        <dt>Version diff</dt><dd>A side-by-side comparison of two releases of one package, to spot a new install script or hidden code that was slipped in.</dd>
+        <dt>Evaluation / benchmark</dt><dd>Testing TRACII's detectors on packages already known to be good or bad, to measure how much they catch and how often they raise false alarms.</dd>
+      </dl>
+    </details>
+
+    <details class="term-group">
+      <summary>Fixing and reporting</summary>
+      <dl class="terms">
+        <dt>Remediation / fix</dt><dd>The change that removes the risk, usually upgrading to a version where the bug is fixed.</dd>
+        <dt>Fix plan</dt><dd>TRACII's short to-do list: remove known malware first, then the few upgrades that fix the most vulnerabilities.</dd>
+        <dt>Override</dt><dd>A line in package.json that forces a safer version of a package you do not use directly.</dd>
+        <dt>Simulate and rescan</dt><dd>TRACII tries the fix in a sealed test area (sandbox) and scans again, so you see it works before changing anything. Your project is never modified.</dd>
+        <dt>CI/CD</dt><dd>The automatic checks that run every time code changes, before it is released.</dd>
+        <dt>CI security gate</dt><dd>A checkpoint in those automatic checks. PASS lets the release continue; FAIL stops it when a problem is at or above the chosen severity.</dd>
+        <dt>SBOM</dt><dd>“Software Bill of Materials”: a full ingredients list of your app's packages. CycloneDX is the standard file format for it.</dd>
+        <dt>SARIF</dt><dd>A standard file format for scan results, so tools like GitHub can show them.</dd>
+        <dt>SCA</dt><dd>“Software Composition Analysis”: checking the third-party parts of your app for security and licence risks. That is what TRACII does.</dd>
+      </dl>
+    </details>
+
+    <details class="term-group">
+      <summary>Views and AI</summary>
+      <dl class="terms">
+        <dt>Impact map</dt><dd>A simple tree showing only the paths that lead to problems, from your app down to the risky package.</dd>
+        <dt>3D graph</dt><dd>Every package in your project as a dot you can rotate and click. Colour shows what was found; bigger dots are used by more packages.</dd>
+        <dt>Attack replay</dt><dd>A step-by-step re-enactment of a real past attack (such as event-stream in 2018) on your own graph, to show what it would reach. Clearly marked as a simulation when your project does not use that package.</dd>
+        <dt>Meta Muse models</dt><dd>The AI models TRACII uses to explain findings in plain language and answer questions. They only see the scanner's evidence.</dd>
+        <dt>AI agents</dt><dd>Several AI “specialists” that each look at a finding with a recognised method (how likely an attack is, what an attacker would do, how trustworthy the package's build is, what could go wrong), plus a judge that combines them.</dd>
+        <dt>Second opinion</dt><dd>Another AI model (Muse Spark Open or Muse Glimmer) that reviews the same evidence independently, so you can see whether they agree.</dd>
+      </dl>
+    </details>
   </section>
 
   <section id="g-report">
-    <h3>Understanding your scan report</h3>
+    <h3>Reading your results</h3>
     <ul class="guide-list">
-      <li><b>Verdict and “look at these first”.</b> The banner states the CI gate result and lists the findings to handle first, ordered by scanner facts only.</li>
-      <li><b>Findings by type.</b> Four separate counts that are never merged into one score: <i>known vulnerabilities</i> (advisories), <i>known malicious packages</i> (OSV MAL- records), <i>suspicious behaviour</i> (heuristic signals from TRACII rules and GuardDog) and <i>repository posture</i>.</li>
-      <li><b>Severity.</b> Critical and High deserve attention first; Medium and Low are real but less urgent; Info is context only (for example “has an install script”).</li>
-      <li><b>Dependency graph.</b> Each dot is a package and each line means “depends on”. Colour shows what the scanners found (yellow = known malware, purple = suspicious behaviour, red/amber/blue = vulnerability severity) and size shows how many packages depend on it. Click a dot to highlight its path up to your app.</li>
-      <li><b>Evidence.</b> Every finding lists its evidence (advisory text, code location, metadata) with a link to the source: OSV.dev, GitHub advisories, the npm registry or the rule that fired.</li>
-      <li><b>AI investigation.</b> Meta Muse models explain the scanner's evidence. Every claim must cite an evidence ID or it is discarded, and the AI never changes the scanner's verdict.</li>
-      <li><b>Remediation and rescanning.</b> “Propose fix” shows the exact package.json change; “Simulate fix and rescan” checks in a sandbox whether the finding disappears. A finding counts as fixed only after that rescan.</li>
-      <li><b>CI Gate PASS / FAIL.</b> The build is blocked when a finding is at or above the chosen threshold (default: High), or marked <i>incomplete</i> when a required check could not run.</li>
-      <li><b>Exports.</b> SBOM (CycloneDX) lists every component; SARIF loads into GitHub code scanning; the gate report and PDF report summarise the scan.</li>
+      <li><b>Overview.</b> One headline (is anything serious?), three counts (known malware, vulnerabilities, suspicious code) and a <b>fix plan</b>: what to remove or upgrade first. Click any count or step to see the details.</li>
+      <li><b>Findings.</b> One row per package, not per report. “lodash 4.17.20 · 5 vulnerabilities · upgrade to 4.18.0 fixes all” tells you the whole story; open it to see each issue in plain words. Tabs only appear when they have something in them.</li>
+      <li><b>Severity.</b> Critical and High first; Medium and Low are real but less urgent; Info notes (such as “has an install script”) are hidden unless you ask for them.</li>
+      <li><b>Impact map.</b> How each risky package reaches your app. “Explore in 3D” shows the whole project as an interactive graph; attack replays live there too.</li>
+      <li><b>Evidence and AI.</b> Each finding shows its evidence with a source link. “Explain with AI” turns that evidence into plain language; the AI must point to the evidence for every claim and can never change the scanner's verdict.</li>
+      <li><b>Fixing.</b> “Propose fix” shows the exact change; “Simulate fix and rescan” proves it in a sandbox. A finding counts as fixed only after that rescan.</li>
+      <li><b>CI gate &amp; reports.</b> PASS or FAIL at the severity you choose (default: High), plus downloads: PDF report, SBOM, SARIF and a gate summary.</li>
+      <li><b>Scan details.</b> Which checks ran and which did not, and the licences of your packages.</li>
+      <li><b>Ask AI.</b> Ask a question about this scan in plain words, typed or spoken; answers point to the findings they are based on.</li>
+      <li><b>Your last scan is kept</b> in this browser, so you can reopen it from New scan later.</li>
     </ul>
   </section>
 
