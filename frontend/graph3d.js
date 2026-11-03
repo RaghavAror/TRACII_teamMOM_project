@@ -34,7 +34,13 @@ export function preloadGraphLib() {
 export function setGraphActive(active) {
   G.active = active;
   if (!G.fg) return;
-  if (active) G.fg.resumeAnimation(); else if (!G.prewarming) G.fg.pauseAnimation();
+  if (active) {
+    G.fg.resumeAnimation();
+    // the panel has just become visible: size the canvas now and again on the next frame (after layout), so the
+    // first click always draws, without waiting for a resize event
+    const fit = () => { const el = $("#graph3d"); if (el?.clientWidth && el.clientHeight) G.fg.width(el.clientWidth).height(el.clientHeight); };
+    fit(); requestAnimationFrame(fit);
+  } else if (!G.prewarming) G.fg.pauseAnimation();
   overlay(active && !G.warmed);
 }
 
@@ -67,8 +73,8 @@ function loadingBox(title, sub) {
 }
 
 const G = {
-  fg: null, scanId: null, raw: null, parents: new Map(), byId: new Map(), onOpenFinding: null,
-  flaggedOnly: false, hlNodes: new Set(), hlLinks: new Set(), wave: new Set(), targets: new Set(),
+  fg: null, scanId: null, raw: null, parents: new Map(), children: new Map(), byId: new Map(), onOpenFinding: null,
+  flaggedOnly: false, extraKeep: new Set(), nodeCache: new Map(), linkCache: new Map(), hlNodes: new Set(), hlLinks: new Set(), wave: new Set(), targets: new Set(),
   ghost: null, timers: [],
 };
 
@@ -106,16 +112,37 @@ function nodeLabel(n) {
   return `<b>${esc(n.label)}</b><br>${esc(bits.join(" · "))}${fl.length ? "<br>" + esc(fl.join(", ")) : ""}`;
 }
 
+// Node and link objects are created once per scan and reused, so the layout keeps the positions it already
+// computed when the visible set changes (filter toggle, replay) instead of starting over from scratch.
+function nodeObj(n) {
+  let o = G.nodeCache.get(n.id);
+  if (!o) G.nodeCache.set(n.id, (o = { ...n }));
+  return o;
+}
+function linkObj(e) {
+  const k = `${e.source}>${e.target}`;
+  let o = G.linkCache.get(k);
+  if (!o) G.linkCache.set(k, (o = { ...e }));
+  return o;
+}
 function visibleData() {
   const { nodes, edges } = G.raw;
   let keep = null;
   if (G.flaggedOnly) {
     keep = new Set([G.raw.app]);
     for (const n of nodes) if (Object.values(n.findings || {}).some((l) => significant(l).length)) for (const a of ancestors(n.id)) keep.add(a);
+    for (const id of G.extraKeep) for (const a of ancestors(id)) keep.add(a);   // a replay target and everything above it
   }
-  const ns = nodes.filter((n) => !keep || keep.has(n.id)).map((n) => ({ ...n }));
-  const ls = edges.filter((e) => !keep || (keep.has(e.source) && keep.has(e.target))).map((e) => ({ ...e }));
-  if (G.ghost) { ns.push({ ...G.ghost.node }); ls.push({ ...G.ghost.link }); }
+  const ns = nodes.filter((n) => !keep || keep.has(n.id)).map(nodeObj);
+  const ls = edges.filter((e) => !keep || (keep.has(e.source) && keep.has(e.target))).map(linkObj);
+  if (G.ghost) { ns.push(nodeObj(G.ghost.node)); ls.push(linkObj(G.ghost.link)); }
+  // Nodes that join an already laid-out graph start next to a connected node that has a position, not at the centre.
+  const placed = (id) => { const o = G.nodeCache.get(id); return o && o.x !== undefined ? o : null; };
+  for (const n of ns) {
+    if (n.x !== undefined) continue;
+    const near = [...(G.parents.get(n.id) || []), ...(G.children.get(n.id) || []), ...(n.ghost ? [G.ghost.link.source] : [])].map(placed).find(Boolean);
+    if (near) { const j = () => (Math.random() - 0.5) * 30; n.x = near.x + j(); n.y = near.y + j(); n.z = near.z + j(); }
+  }
   return { nodes: ns, links: ls };
 }
 
@@ -146,12 +173,17 @@ function showNodeInfo(n) {
     h("p", { class: "muted" }, "Highlighted: every package above it, up to your app."));
 }
 
+function lookAt(n, dist = 140) {
+  const x = n.x || 0, y = n.y || 0, z = n.z || 0, len = Math.hypot(x, y, z);
+  const [ux, uy, uz] = len > 1 ? [x / len, y / len, z / len] : [0, 0, 1];
+  G.fg.cameraPosition({ x: x + ux * dist, y: y + uy * dist, z: z + uz * dist }, { x, y, z }, 900);
+}
+
 function focus(n) {
   G.userFocused = true;   // the one-time auto zoom-to-fit must not undo a focus made while the layout settles
   highlightAncestors(n.id);
   showNodeInfo(n);
-  const d = 90 / Math.hypot(n.x || 1, n.y || 1, n.z || 1);
-  G.fg.cameraPosition({ x: (n.x || 0) * (1 + d), y: (n.y || 0) * (1 + d), z: (n.z || 0) * (1 + d) }, n, 900);
+  lookAt(n);   // camera 140 units out, on the side facing away from the graph centre
 }
 
 export function focusPackage(label) {
@@ -172,8 +204,12 @@ export async function initGraph(scan, { onOpenFinding }) {
   try {
     const [ForceGraph3D, raw] = await Promise.all([loadLib(), api(`/api/scans/${scan.scan_id}/graph`)]);
     G.raw = raw;
-    G.parents = new Map();
-    for (const e of raw.edges) (G.parents.get(e.target) || G.parents.set(e.target, []).get(e.target)).push(e.source);
+    G.nodeCache = new Map(); G.linkCache = new Map(); G.extraKeep = new Set();
+    G.parents = new Map(); G.children = new Map();
+    for (const e of raw.edges) {
+      (G.parents.get(e.target) || G.parents.set(e.target, []).get(e.target)).push(e.source);
+      (G.children.get(e.source) || G.children.set(e.source, []).get(e.source)).push(e.target);
+    }
     G.flaggedOnly = raw.nodes.length > 600;
     $("#graph-flagged").checked = G.flaggedOnly;
     el.replaceChildren();
@@ -196,6 +232,7 @@ export async function initGraph(scan, { onOpenFinding }) {
     let fitted = false;
     G.userFocused = false;
     G.fg.onEngineStop(() => {
+      G.fg.warmupTicks(0);   // positions are kept from now on, so later updates need no blocking pre-layout
       if (!fitted) { fitted = true; if (!G.userFocused) G.fg.zoomToFit(G.prewarming ? 0 : 600, 30); }
       if (G.prewarming) setTimeout(finishPrewarm, 50);
       else if (!G.warmed) { G.warmed = true; overlay(false); document.dispatchEvent(new CustomEvent("tracii:3d-ready")); }
@@ -218,6 +255,15 @@ export async function initGraph(scan, { onOpenFinding }) {
   }
 }
 
+// A click anywhere on the 3D area wakes the view up: resize the canvas to its box and redraw.
+$("#graph3d").addEventListener("pointerdown", () => {
+  if (!G.fg) return;
+  const el = $("#graph3d");
+  if (el.clientWidth && el.clientHeight) G.fg.width(el.clientWidth).height(el.clientHeight);
+  G.fg.resumeAnimation();
+  overlay(false);
+});
+
 $("#graph-flagged").addEventListener("change", (e) => {
   G.flaggedOnly = e.target.checked;
   if (G.fg) { G.fg.graphData(visibleData()); refresh(); }
@@ -232,8 +278,9 @@ function stopReplay(clearGraph) {
   G.timers.forEach(clearTimeout);
   G.timers = [];
   if (clearGraph) {
-    G.ghost = null; G.wave.clear(); G.targets.clear(); G.hlNodes.clear(); G.hlLinks.clear();
-    if (G.fg) { G.fg.graphData(visibleData()); refresh(); }
+    const changed = G.ghost || G.extraKeep.size;   // only rebuild the graph if a replay added something
+    G.ghost = null; G.wave.clear(); G.targets.clear(); G.hlNodes.clear(); G.hlLinks.clear(); G.extraKeep.clear();
+    if (G.fg) { if (changed) G.fg.graphData(visibleData()); refresh(); }
     $("#replay-out").replaceChildren();
   }
 }
@@ -277,7 +324,9 @@ $("#replay-form").addEventListener("submit", async (e) => {
   const t = r.targets[0];
   if (!t || !G.fg) return;
   // make sure the target and its dependents are drawn even in "paths to findings" mode
-  if (G.flaggedOnly) { G.flaggedOnly = false; $("#graph-flagged").checked = false; }
+  // keep the lighter "paths to findings" view and only add the replay target and the packages above it
+  G.extraKeep = new Set(r.targets.map((x) => x.id));
+  G.fg.graphData(visibleData()); refresh();
   let at = 0;
   r.scenario.steps.forEach((st, i) => {
     G.timers.push(setTimeout(() => {
@@ -293,7 +342,10 @@ $("#replay-form").addEventListener("submit", async (e) => {
         G.fg.graphData(visibleData());
         refresh();
         const n = G.fg.graphData().nodes.find((x) => x.id === t.id);
-        if (n) setTimeout(() => focus(n), 400);
+        if (n) {
+          G.timers.push(setTimeout(() => focus(n), 400));
+          G.timers.push(setTimeout(() => lookAt(n), 1600));   // newly added nodes settle a little: re-aim once they have
+        }
       } else if (st.stage === "spread" || (st.stage === "payload" && !r.scenario.steps.some((x) => x.stage === "spread"))) {
         t.waves.forEach((w, k) => G.timers.push(setTimeout(() => {
           w.forEach((id) => G.wave.add(id));
@@ -311,5 +363,7 @@ $("#replay-form").addEventListener("submit", async (e) => {
     G.hlNodes = new Set([t.id, ...G.wave]);
     G.hlLinks = new Set(G.raw.edges.filter((ed) => G.hlNodes.has(ed.source) && G.hlNodes.has(ed.target)).map(linkKey));
     refresh();
+    const n = G.fg.graphData().nodes.find((x) => x.id === t.id);
+    if (n) lookAt(n, 220);   // step back to show the target and everything it exposed
   }, at));
 });

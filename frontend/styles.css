@@ -426,3 +426,6 @@ button.v-stat:hover { border-color: var(--accent); filter: none; }
 .g3d-loading b { color: #f1f5f9; font-size: 16px; } .g3d-loading span { color: #94a3b8; font-size: 13px; max-width: 360px; }
 .g3d-loading .spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(148, 163, 184, .3); border-top-color: #60a5fa; animation: spin .8s linear infinite; }
 #graph3d > .g3d-loading:only-child { position: absolute; inset: 0; }
+
+.graph-hint { margin: 0 0 8px; padding: 6px 12px; border-radius: 10px; font-size: 13px; color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
